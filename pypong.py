@@ -42,6 +42,7 @@ class GameSprite(pygame.sprite.DirtySprite):
         self._x = game._width//2
         self._y = game._height//2
         # sprite image
+        self.rotation = 0
         self.base_image = pygame.Surface((self._width, self._height))
         self.base_image.fill(Color.green)
         self.setImage(self.base_image)
@@ -52,15 +53,32 @@ class GameSprite(pygame.sprite.DirtySprite):
     def _redraw(self):
         self.dirty = 1 if self.dirty == 0 else 2
 
-    def _update_scale(self):
+    def _update_image(self):
         scale = self.game._scale
         self.rect.w = self._width * scale
         self.rect.h = self._height * scale
         self.image = pygame.transform.scale(
                 self.base_image,
                 (self.rect.w, self.rect.h))
+        if self.rotation != 0:
+            self._update_rotation()
+        else:
+            self._update_position()
         self.mask = pygame.mask.from_surface(self.image)
+
+    def _update_rotation(self):
         self._update_position()
+        centerx = self.rect.centerx
+        centery = self.rect.centery
+        # rotate sprite around center, not top left
+        # rotation only affects visuals
+        # internal width, height, rotation are unaffected
+        self.image = pygame.transform.rotate(self.image, self.rotation)
+        rotated_rect = self.image.get_rect()
+        self.rect.w = rotated_rect.w
+        self.rect.h = rotated_rect.h
+        self.rect.centerx = centerx
+        self.rect.centery = centery
 
     def _update_position(self):
         scale = self.game._scale
@@ -83,9 +101,27 @@ class GameSprite(pygame.sprite.DirtySprite):
 
     def moveCenterTo(self, x, y):
         self._x = x - self._width // 2
-        self._y = y - self._height //2
+        self._y = y - self._height // 2
         self._update_position()
         return self
+
+    @property
+    def _cx(self):
+        return self._x + self._width // 2
+
+    @_cx.setter
+    def _cx(self, x):
+        self._x = x - self._width // 2
+        self._update_position()
+
+    @property
+    def _cy(self):
+        return self._y + self._height // 2
+
+    @_cy.setter
+    def _cy(self, y):
+        self._y = y - self._height // 2
+        self._update_position()
 
     def resize(self, w, h = None):
         if h == None:
@@ -93,7 +129,19 @@ class GameSprite(pygame.sprite.DirtySprite):
             return self
         self._width = w
         self._height = h
-        self._update_scale()
+        self._update_image()
+        return self
+
+    def rotate(self, degrees):
+        self.rotation += degrees
+        self.rotateTo(self.rotation)
+        return self
+
+    def rotateTo(self, degrees):
+        degrees %= 360
+        if degrees < 0: degrees += 360
+        self.rotation = degrees
+        self._update_image()
         return self
 
     def setImage(self, image):
@@ -272,7 +320,7 @@ class Game:
                 self.base_background,
                 (WIDTH, HEIGHT))
         for sprite in self.sprites:
-            sprite._update_scale()
+            sprite._update_image()
         self.refresh()
 
     def _draw_sprites(self):
@@ -359,33 +407,31 @@ class Striker(GameSprite):
     def __init__(self, game):
         super().__init__(game)
         self.velocity = 0
-        self.rotation = 0
+        self.rot_velocity = 0
 
     def setup(self, speed, color, wh, friction, accel, power, grip, elasticity):
         self.speed = 15 * (speed/10.0)
+        self.rot_speed = 5 * (speed/10.0)
         self.accel = 5 * (accel/10.0)
         self.color = color
         self.friction = 0.8 * (10.0/friction)
         self.elasticity = 1.0 - 0.6 / (elasticity/10.0 + 0.6)
-        self.static_friction_ratio = 3
         self.power = 8 * (power / 10.0)
-        self.grip = 0.5 - 0.5/(grip/10.0 + 0.5)
-        striker = pygame.Surface(wh)
+        self.grip = 0.5 - 0.5/(2*grip/10.0 + 0.5)
+        striker = pygame.Surface(wh, flags=pygame.SRCALPHA)
         striker.fill(self.color)
         self.setImage(striker)
 
     def _apply_friction(self):
         self.velocity *= self.friction
-        self.velocity = round(self.velocity)
+        self.rot_velocity *= self.friction
+        if abs(self.velocity) < 1: self.velocity = 0
+        if abs(self.rot_velocity) < 1: self.rot_velocity = 0
 
     def update(self):
         self.move(0, self.velocity * 60.0/self.game.fps)
-        sf = self.static_friction_ratio
-        if self.velocity > (sf * self.friction):
-            self._apply_friction()
-        elif self.velocity < (-sf * self.friction):
-            self._apply_friction()
-        else: self.velocity = 0
+        self._rotate()
+        self._apply_friction()
 
     def _moveDown(self):
         self.velocity += self.accel
@@ -396,6 +442,20 @@ class Striker(GameSprite):
         self.velocity -= self.accel
         if self.velocity <= -self.speed:
             self.velocity = -self.speed
+
+    def _rotateRight(self):
+        self.rot_velocity -= self.accel
+        if abs(self.rot_velocity) >= self.rot_speed:
+            self.rot_velocity = -self.rot_speed
+
+    def _rotateLeft(self):
+        self.rot_velocity += self.accel
+        if abs(self.rot_velocity) >= self.rot_speed:
+            self.rot_velocity = self.rot_speed
+
+    def _rotate(self):
+        self.rotation += self.rot_velocity * 60.0/self.game.fps
+        self.rotateTo(self.rotation)
 
     def _snapToEdge(self):
         if self._y > self.game._height // 2:
@@ -459,7 +519,7 @@ class Ball(GameSprite):
 
     def _unclipFromStriker(self, striker):
         backstep = -(self.velocity + (0, -striker.velocity))
-        backstep.normalize()
+        backstep.normalize_ip()
         limit = 3 * self._substeps
         while pygame.sprite.collide_mask(self, striker):
             self.move(*(backstep).xy)
@@ -468,33 +528,66 @@ class Ball(GameSprite):
             if limit <= 0:
                 break
 
+    def _normalizedStrikerAngle(self, striker):
+        rotation = striker.rotation
+        # use the offset from the striker to calculate
+        # on which face the impact occured
+        striker_normal = pygame.math.Vector2(0, 0)
+        offset_vector = pygame.math.Vector2(
+                self._cx - striker._cx,
+                (self._cy - striker._cy))
+        # rotate the vector to match unrotated virtual striker
+        offset_vector.rotate_ip(-striker.rotation)
+        if (offset_vector.y > -striker._height//2 and
+            offset_vector.y < striker._height //2 and
+            offset_vector.x < 0):
+            striker_normal = pygame.math.Vector2(-1, 0)
+        elif (offset_vector.y <= -striker._height//2):
+            striker_normal = pygame.math.Vector2(0, 1)
+        elif (offset_vector.y >= striker._height//2):
+            striker_normal = pygame.math.Vector2(0, -1)
+        else:
+            striker_normal = pygame.math.Vector2(1, 0)
+        print("face:", striker_normal)
+        striker_normal.rotate_ip(-rotation)
+        print("final angle", striker_normal)
+        return striker_normal
+
+
     def _bounceOnStriker(self, striker):
         # first, move ball back until not clipping Striker
         self._unclipFromStriker(striker)
-        # use the angle to the striker as the bounce angle
-        impact_vector = pygame.math.Vector2(
-                self.rect.centerx - striker.rect.centerx,0)
-        impact_vector = impact_vector.rotate(striker.rotation)
-        impact_vector.scale_to_length(\
+        final_vector = pygame.math.Vector2(0, 0)
+        # then calculate information about the collision
+        striker_normal = self._normalizedStrikerAngle(striker)
+        self.velocity = striker_normal
+        print("striker_angle:", striker.rotation)
+        print()
+        self.roll()
+        return
+        # reflect off the striker
+        self._bounce(-striker_normal)
+        self.velocity.scale_to_length(\
                 self.speed * striker.elasticity)
+        final_vector = self.velocity
         # apply modifications based on the striker's attributes
-        striker_normal = self.velocity = \
-                pygame.math.Vector2(self._x - striker._x, 0)
-        striker_normal.normalize()
-        striker_normal = striker_normal.rotate(striker.rotation)
-        striker_hit_vector = striker_normal * striker.power
-        striker_normal.scale_to_length(striker.power/self.mass)
-        impact_vector += striker_normal
-        impact_vector += (0, striker.velocity * striker.grip)
-        self.spin += striker.velocity * striker.grip
-        striker.velocity *= striker.grip * 2 * self.mass
-        if impact_vector.magnitude() == 0:
+        striker_hit_vector = striker_normal.copy()
+        striker_hit_vector.scale_to_length(striker.power/self.mass)
+        final_vector += striker_hit_vector
+        grip_vector = pygame.math.Vector2(0,
+                striker.velocity * striker.grip / self.mass)
+        grip_vector = grip_vector.rotate(-striker.rotation)
+        final_vector += grip_vector
+        self.spin += grip_vector.y
+        striker.velocity -= grip_vector.y * self.mass
+        # apply final calculated vector
+        if final_vector.magnitude() == 0:
             if striker_normal.magnitude() == 0:
-                self.velocity *= -1
+                self.velocity = offset_vector
             else:
-                self.velocity = striker_normal
+                self.velocity = striker_hit_vector
         else:
-            self.velocity = impact_vector
+            self.velocity = final_vector
         self.speed = self.velocity.magnitude()
         self.roll()
 
@@ -524,7 +617,7 @@ class PONGGAME(Game):
         self._initialize_controls()
 
     def _initialize_sprites(self):
-        striker_size = (30, 100)
+        striker_size = (100, 30)
         striker_speed = 10
         striker_accel = 10
         striker_color = Color.white
@@ -603,8 +696,11 @@ class PONGGAME(Game):
         center_left = self._width // 4
         center_right = self._width - center_left
         self.striker_left.moveCenterTo(left, middle)
-        right_position = right - self.striker_right._width
-        self.striker_right.moveCenterTo(right_position, middle)
+        self.striker_right.moveCenterTo(right, middle)
+        for striker in (self.striker_right, self.striker_left):
+            striker.rotateTo(0)
+            striker.rot_velocity = 0
+            striker.velocity = 0
         self.ball.moveCenterTo(center, middle)
         self.ball.velocity = pygame.math.Vector2(1, 0)
         self.ball.speed = self.ball.min_speed
@@ -629,10 +725,18 @@ class PONGGAME(Game):
             self.p1_up = down
         elif event.key in (pygame.K_DOWN,):
             self.p1_dn = down
+        elif event.key in (pygame.K_RIGHT,):
+            self.p1_rt = down
+        elif event.key in (pygame.K_LEFT,):
+            self.p1_lt = down
         elif event.key in (pygame.K_w,):
             self.p2_up = down
         elif event.key in (pygame.K_s,):
             self.p2_dn = down
+        elif event.key in (pygame.K_a,):
+            self.p2_lt = down
+        elif event.key in (pygame.K_d,):
+            self.p2_rt = down
         elif event.key in (pygame.K_p,) and down:
             self._pause = not self._pause
             self._handle_pause()
@@ -644,10 +748,18 @@ class PONGGAME(Game):
             self.striker_right._moveUp()
         if self.p1_dn:
             self.striker_right._moveDown()
+        if self.p1_rt:
+            self.striker_right._rotateRight()
+        if self.p1_lt:
+            self.striker_right._rotateLeft()
         if self.p2_up:
             self.striker_left._moveUp()
         if self.p2_dn:
             self.striker_left._moveDown()
+        if self.p2_rt:
+            self.striker_left._rotateRight()
+        if self.p2_lt:
+            self.striker_left._rotateLeft()
 
     def _scoreOnPlayer(self, player):
         if player == self.striker_left:
