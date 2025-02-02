@@ -25,9 +25,29 @@ class Color:
     white = (255, 255, 255)
     green = (0, 255, 0)
 
-WIDTH, HEIGHT = 900, 600
+WIDTH, HEIGHT = 1300, 600
 
 # HELPERS
+class Key():
+    def __init__(self, key_event):
+        if key_event.type == pygame.KEYDOWN:
+            self.down = True
+        elif key_event.type == pygame.KEYUP:
+            self.down = False
+        if pygame.key.get_mods() & pygame.KMOD_SHIFT:
+            self.shift = True
+        else: self.shift = False
+        if pygame.key.get_mods() & pygame.KMOD_CTRL:
+            self.control = True
+        else: control = False
+        if pygame.key.get_mods() & pygame.KMOD_ALT:
+            self.alt = True
+        else: self.alt = False
+        self.key = key_event.key
+
+    def __eq__(self, other):
+        return self.key == other
+
 class GameSprite(pygame.sprite.DirtySprite):
     def __init__(self, game):
         super().__init__()
@@ -262,23 +282,24 @@ class TextSprite(GameSprite):
         return self
 
 class Game:
-    def __init__(self):
+    def __init__(self, w = None, h = None):
         self.name = "game"
-        self.fps = 30
         self.sprites = pygame.sprite.LayeredDirty()
         self._pause = False
-        self.vsync = 1
         padding = (10, 10, 10, 10)
-        self._init_screen(padding, WIDTH, HEIGHT)
+        self._window = Window(self)
+        if w == None: w = WIDTH
+        if h == None: h = HEIGHT
+        self._init_screen(padding, w, h)
 
     def _init_screen(self, padding, w, h):
         self._padding = padding
+        self.screen_ratio = w/h
         self._width = w - padding[0] - padding[1]
         self._height = h - padding[2] - padding[3]
-        self.screen_ratio = self._width/self._height
         self._scale = 1
         self.base_background = pygame.Surface((w, h))
-        self.base_background.fill(Color.black)
+        self.base_background.fill(Color.green)
         game_space = pygame.Rect((padding[0], padding[1]),
                                  (self._width, self._height))
         pygame.draw.rect(self.base_background,
@@ -287,38 +308,28 @@ class Game:
         self.background = self.base_background
         self.refresh()
 
+    @property
+    def width(self):
+        return self._scale*(self._width + self._padding[0] + self._padding[1])
+
+    @property
+    def height(self):
+        return self._scale*(self._height + self._padding[1] + self._padding[2])
+
     def refresh(self):
-        self._redraw_screen()
+        self._redraw()
 
     def start(self):
         self.refresh()
         self._reset()
-        self.clock = pygame.time.Clock()
-        self.stop = False
-        while not self.stop:
-            self._tick()
-
-    def quit(self):
-        self.stop = True
 
     def _add_sprite(self, *sprites):
         self.sprites.add(sprites)
 
-    def _resize_screen(self, w, h):
-        global WIDTH
-        global HEIGHT
-        if (WIDTH - w) != 0:
-            WIDTH = w
-            HEIGHT = (1/self.screen_ratio) * w
-        else:
-            HEIGHT = h
-            WIDTH = h * self.screen_ratio
-        WIDTH = round(WIDTH)
-        HEIGHT = round(HEIGHT)
-        self._scale = float(WIDTH)/self._width
+    def _resize(self, scale):
+        self._scale = scale
         self.background = pygame.transform.scale(
-                self.base_background,
-                (WIDTH, HEIGHT))
+            self.base_background, (self.width, self.height))
         for sprite in self.sprites:
             sprite._update_image()
         self.refresh()
@@ -328,30 +339,17 @@ class Game:
         self.sprites.draw(self.screen)
         pygame.display.update()
 
-    def _redraw_screen(self):
-        self.screen = pygame.display.set_mode(
-                (WIDTH, HEIGHT),
-                pygame.RESIZABLE, vsync = self.vsync)
-        pygame.display.set_caption(self.name)
-        self.screen.fill(Color.white)
+    def _redraw(self):
         scale = self._scale
+        self.screen = pygame.Surface((self.width, self.height))
         self.screen.blit(self.background, (0, 0))
         for sprite in self.sprites:
             sprite._redraw()
         self._draw_sprites()
 
-    def _handle_events(self):
-        for event in pygame.event.get():
-            self._handle_event(event)
-
     def _handle_event(self, event):
-        if event.type == pygame.QUIT:
-            self.quit()
-        elif event.type in (pygame.KEYDOWN, pygame.KEYUP):
+        if event.type in (pygame.KEYDOWN, pygame.KEYUP):
             self._handle_key(event)
-        elif event.type == pygame.VIDEORESIZE:
-            self._resize_screen(event.w, event.h)
-            self._redraw_screen()
 
     def unpause(self):
         self._pause = False
@@ -365,10 +363,8 @@ class Game:
         self._draw_sprites()
 
     def _tick(self):
-        self._handle_events()
         if self._pause == False:
             self._game_loop()
-        last_tick = self.clock.tick(self.fps)
 
     @property
     def left(self):
@@ -386,6 +382,14 @@ class Game:
     def bottom(self):
         return self._height
 
+    @property
+    def fps(self):
+        return self._window.fps
+
+    @fps.setter
+    def fps(self, fps):
+        self._window.fps = fps
+
     # functions to override
     def _handle_key(self, event):
         return
@@ -402,6 +406,145 @@ class Game:
     def _load(self):
         return
 
+class Window:
+    def __new__(cls, game = None):
+        if not hasattr(cls, 'singleton'):
+            cls.singleton = super().__new__(cls)
+            cls.singleton.initialize()
+        if game != None: cls.singleton.addGame(game)
+        return cls.singleton
+
+    def initialize(self):
+        global WIDTH
+        global HEIGHT
+        self.name = "Nameless Window"
+        self.vsync = 1
+        self.games = set()
+        self.focused_games = set()
+        self.fps = 30
+        padding = [10, 10, 10, 10]
+        self._init_window(padding, WIDTH, HEIGHT)
+
+
+    def _init_window(self, padding, w, h):
+        self._width = WIDTH
+        self._height = HEIGHT
+        self._padding = padding
+        self.screen_ratio = self._width / self._height
+        self._scale = 1
+        self.base_background = pygame.Surface((w, h))
+        self.base_background.fill(Color.white)
+        self._resize_window(WIDTH, HEIGHT)
+
+    def _handle_events(self):
+        for event in pygame.event.get():
+            self._handle_event(event)
+            for game in self.focused_games:
+                game._handle_event(event)
+
+    def _handle_event(self, event):
+        if event.type == pygame.QUIT:
+            self.quit()
+        elif event.type == pygame.VIDEORESIZE:
+            self._resize_window(event.w, event.h)
+            self._redraw()
+        elif event.type in (pygame.KEYDOWN, pygame.KEYUP):
+            self._handle_key(event)
+
+    def _handle_key(self, event):
+        key = Key(event)
+        if key == pygame.K_ESCAPE:
+           self.quit()
+
+    def _redraw(self):
+        for game in self.games:
+            game._redraw()
+
+    def _render_games(self):
+        for game in self.games:
+            game._tick()
+            self.window.blit(game.screen, game.window_position)
+        pygame.display.update()
+
+    def _resize_window(self, w, h):
+        global WIDTH
+        global HEIGHT
+        if (WIDTH - w) != 0:
+            WIDTH = w
+            HEIGHT = (1.0/self.screen_ratio) * w
+        else:
+            HEIGHT = h
+            WIDTH = h * self.screen_ratio
+        WIDTH = round(WIDTH)
+        HEIGHT = round(HEIGHT)
+        self.window = pygame.display.set_mode(
+                        (WIDTH, HEIGHT),
+                        pygame.RESIZABLE, vsync = self.vsync)
+        pygame.display.set_caption(self.name)
+        self._scale = (float(WIDTH) /self._width)
+        self.background = pygame.transform.scale(
+                self.base_background,
+                (WIDTH, HEIGHT))
+        self.window.blit(self.background, (0, 0))
+        for game in self.games:
+            game._resize(self._scale)
+            self._update_game_position(game)
+        self.refresh()
+
+    def _update_game_position(self, game):
+        game.window_position = (game._window_position[0] * self._scale,
+                                game._window_position[1] * self._scale)
+
+    def refresh(self):
+        self._render_games()
+
+    def setName(name):
+        self.name = name
+        pygame.display.set_caption(self.name)
+
+    def addGame(self, game: Game, position = (0, 0), focus = True):
+        self.games.add(game)
+        self.moveGameTo(game, *position)
+        self.focusGame(game, focus)
+        return self
+
+    def removeGame(self, game):
+        self.games.remove(game)
+
+    def focusGame(self, game: Game, focus):
+        if focus: self.focused_games.add(game)
+        else: self.focused_games.remove(game)
+
+    def moveGameTo(self, game, x, y):
+        game._window_position = (x, y)
+        self._update_game_position(game)
+
+    def moveGame(self, game, dx, dy):
+        game._window_position = (game.window_position + dx,
+                                game.window_position + dy)
+        self._update_game_position(game)
+
+    def moveGameCenterTo(self, game, cx, cy):
+        game._window_position = (cx - game._width//2,
+                                cy - game._height//2)
+        self._update_game_position(game)
+
+    def start(self):
+        for game in self.games:
+            game.start()
+        self.clock = pygame.time.Clock()
+        self.stop = False
+        while not self.stop:
+            self._tick()
+
+    def quit(self):
+        self.stop = True
+
+    def _tick(self):
+        self._handle_events()
+        self._render_games()
+        last_tick = self.clock.tick(self.fps)
+
 # PONG implementation
 class Striker(GameSprite):
     def __init__(self, game):
@@ -409,10 +552,11 @@ class Striker(GameSprite):
         self.velocity = 0
         self.rot_velocity = 0
 
-    def setup(self, speed, color, wh, friction, accel, power, grip, elasticity):
+    def setup(self, color, wh, friction, speed, accel, rot_speed, rot_accel, power, grip, elasticity):
         self.speed = 15 * (speed/10.0)
-        self.rot_speed = 5 * (speed/10.0)
         self.accel = 5 * (accel/10.0)
+        self.rot_speed = 10 * (rot_speed/10.0)
+        self.rot_accel = 2 * (rot_accel/10.0)
         self.color = color
         self.friction = 0.8 * (10.0/friction)
         self.elasticity = 1.0 - 0.6 / (elasticity/10.0 + 0.6)
@@ -444,12 +588,12 @@ class Striker(GameSprite):
             self.velocity = -self.speed
 
     def _rotateRight(self):
-        self.rot_velocity -= self.accel
+        self.rot_velocity -= self.rot_accel
         if abs(self.rot_velocity) >= self.rot_speed:
             self.rot_velocity = -self.rot_speed
 
     def _rotateLeft(self):
-        self.rot_velocity += self.accel
+        self.rot_velocity += self.rot_accel
         if abs(self.rot_velocity) >= self.rot_speed:
             self.rot_velocity = self.rot_speed
 
@@ -496,13 +640,22 @@ class Ball(GameSprite):
 
     def bounceOnCeiling(self):
         next_y = self._y + self.velocity.y
+        next_x = self._x + self.velocity.x
         floor = self.game.bottom
+        right = self.game.right
         if next_y <= 0:
             self._y = 0
             self._bounce(pygame.math.Vector2(0, -1))
         elif next_y + 2 * self.r >= floor:
             self._y = floor - 2 * self.r
             self._bounce(pygame.math.Vector2(0, 1))
+
+        if next_x <= 0:
+            self._x = 0
+            self._bounce(pygame.math.Vector2(1, 0))
+        elif next_x + 2 * self.r >= right:
+            self._x = right - 2 * self.r
+            self._bounce(pygame.math.Vector2(-1, 0))
 
     def scoreOnPlayers(self):
         goals = self.game.goals # dict(striker, goal_zone)
@@ -518,7 +671,7 @@ class Ball(GameSprite):
                 self._bounceOnStriker(striker)
 
     def _unclipFromStriker(self, striker):
-        backstep = -(self.velocity + (0, -striker.velocity))
+        backstep = -self.velocity
         backstep.normalize_ip()
         limit = 3 * self._substeps
         while pygame.sprite.collide_mask(self, striker):
@@ -528,30 +681,86 @@ class Ball(GameSprite):
             if limit <= 0:
                 break
 
-    def _normalizedStrikerAngle(self, striker):
+    def _normalizedStrikerImpactAngle(self, striker):
         rotation = striker.rotation
         # use the offset from the striker to calculate
         # on which face the impact occured
-        striker_normal = pygame.math.Vector2(0, 0)
         offset_vector = pygame.math.Vector2(
                 self._cx - striker._cx,
-                (self._cy - striker._cy))
-        # rotate the vector to match unrotated virtual striker
-        offset_vector.rotate_ip(-striker.rotation)
+                self._cy - striker._cy)
+        # rotate the offset vector to match striker
+        offset_vector.rotate_ip(striker.rotation)
+        # determine which face is hit
         if (offset_vector.y > -striker._height//2 and
-            offset_vector.y < striker._height //2 and
-            offset_vector.x < 0):
-            striker_normal = pygame.math.Vector2(-1, 0)
-        elif (offset_vector.y <= -striker._height//2):
-            striker_normal = pygame.math.Vector2(0, 1)
-        elif (offset_vector.y >= striker._height//2):
-            striker_normal = pygame.math.Vector2(0, -1)
+            offset_vector.y < striker._height //2):
+            if offset_vector.x < striker._width//2:
+                striker_normal = pygame.math.Vector2(-1, 0)
+            else: striker_normal = pygame.math.Vector2(1, 0)
         else:
-            striker_normal = pygame.math.Vector2(1, 0)
-        print("face:", striker_normal)
+            if (offset_vector.y <= -striker._height//2):
+                striker_normal = pygame.math.Vector2(0, -1)
+            else:
+                striker_normal = pygame.math.Vector2(0, 1)
+        # calculate the resulting normal
         striker_normal.rotate_ip(-rotation)
-        print("final angle", striker_normal)
         return striker_normal
+
+    def _rotateHitOnStriker(self, striker):
+        final_vector = pygame.math.Vector2(0, 0)
+        if abs(striker.rot_velocity) <= 1: return final_vector
+        # first, test if the striker is rotating onto the ball
+        offset_vector = pygame.math.Vector2(
+                self._cx - striker._cx,
+                self._cy - striker._cy)
+        striker_normal = self._normalizedStrikerImpactAngle(striker)
+        scale = self.game._scale
+        hitting = None
+        for i in range(self._substeps):
+            future_striker_image = pygame.transform.rotate(striker.image,
+                                            striker.rot_velocity/self._substeps)
+            future_striker_mask = pygame.mask.from_surface(future_striker_image)
+            mask_offset = pygame.math.Vector2(
+               striker.rect.centerx - future_striker_image.get_width()/2,
+               striker.rect.centery - future_striker_image.get_height()/2)
+            mask_offset -= pygame.math.Vector2(self.rect.x, self.rect.y)
+            hitting = self.mask.overlap(future_striker_mask, mask_offset)
+
+            # debug drawing
+            self.game.screen.blit(self.game.background, (0, 0))
+            self.game.screen.blit(self.image, (400,400))
+            self.game.screen.blit(future_striker_image, (400 + mask_offset.x,
+                                                         400 + mask_offset.y))
+            if hitting == None:
+                continue
+            else:
+                print(self.mask.overlap_area(future_striker_mask, mask_offset))
+                break
+        if hitting == None:
+            print("not rotate hit!")
+            return final_vector
+        else:
+            print("rotate hit!")
+        # then, determine the direction and angle of the hit
+        striker_rot_hit_vector = striker_normal
+        future_offset = offset_vector.rotate(striker.rot_velocity)
+        rot_hit_speed = ((future_offset - offset_vector).magnitude()
+                         * striker.elasticity / self.mass)
+        if striker_rot_hit_vector.length() == 0:
+            print("error rotate hit")
+            return final_vector
+        striker_rot_hit_vector.scale_to_length(rot_hit_speed)
+        print(rot_hit_speed)
+        print(striker_rot_hit_vector)
+        if striker.rot_velocity > 0: striker.rot_velocity -= rot_hit_speed
+        else: striker.rot_velocity += rot_hit_speed
+
+        # debug drawing
+        line = pygame.draw.line(self.game.screen, Color.green,
+                                (400, 400),
+                                (400 + striker_rot_hit_vector.x * 30,
+                                 400 + striker_rot_hit_vector.y * 30))
+        # final_vector += striker_rot_hit_vector
+        return final_vector
 
 
     def _bounceOnStriker(self, striker):
@@ -559,37 +768,35 @@ class Ball(GameSprite):
         self._unclipFromStriker(striker)
         final_vector = pygame.math.Vector2(0, 0)
         # then calculate information about the collision
-        striker_normal = self._normalizedStrikerAngle(striker)
-        self.velocity = striker_normal
-        print("striker_angle:", striker.rotation)
-        print()
-        self.roll()
-        return
+        striker_normal = self._normalizedStrikerImpactAngle(striker)
         # reflect off the striker
-        self._bounce(-striker_normal)
-        self.velocity.scale_to_length(\
-                self.speed * striker.elasticity)
-        final_vector = self.velocity
+        reflect_vector = self.velocity.copy().reflect(striker_normal)
+        reflect_vector.scale_to_length(self.speed * striker.elasticity)
+        # final_vector = reflect_vector
         # apply modifications based on the striker's attributes
+        # modification 1: striker power
         striker_hit_vector = striker_normal.copy()
         striker_hit_vector.scale_to_length(striker.power/self.mass)
-        final_vector += striker_hit_vector
+        # final_vector += striker_hit_vector
+        # modification 2: striker grip
         grip_vector = pygame.math.Vector2(0,
                 striker.velocity * striker.grip / self.mass)
         grip_vector = grip_vector.rotate(-striker.rotation)
-        final_vector += grip_vector
         self.spin += grip_vector.y
         striker.velocity -= grip_vector.y * self.mass
+        # final_vector += grip_vector
+        # modification 3: striker rotation
+        final_vector += self._rotateHitOnStriker(striker)
         # apply final calculated vector
         if final_vector.magnitude() == 0:
             if striker_normal.magnitude() == 0:
                 self.velocity = offset_vector
             else:
-                self.velocity = striker_hit_vector
+                # self.velocity = striker_hit_vector
+                self.velocity *= -1
         else:
             self.velocity = final_vector
         self.speed = self.velocity.magnitude()
-        self.roll()
 
     def roll(self):
         self.speed -= self.rolling_friction/self._substeps
@@ -606,7 +813,7 @@ class Ball(GameSprite):
             self.roll()
             self.bounceOnCeiling()
             self.bounceOnStrikers()
-        self.scoreOnPlayers()
+        # self.scoreOnPlayers()
 
 class PONGGAME(Game):
     def __init__(self):
@@ -620,17 +827,21 @@ class PONGGAME(Game):
         striker_size = (100, 30)
         striker_speed = 10
         striker_accel = 10
+        striker_rot_speed = 10
+        striker_rot_accel = 10
         striker_color = Color.white
         striker_friction = 10
         striker_power = 10
         striker_grip = 10
         striker_elasticity = 10
         striker_parameters = (
-                striker_speed,
                 striker_color,
                 striker_size,
                 striker_friction,
+                striker_speed,
                 striker_accel,
+                striker_rot_speed,
+                striker_rot_accel,
                 striker_power,
                 striker_grip,
                 striker_elasticity)
@@ -697,6 +908,7 @@ class PONGGAME(Game):
         center_right = self._width - center_left
         self.striker_left.moveCenterTo(left, middle)
         self.striker_right.moveCenterTo(right, middle)
+        print(right, middle)
         for striker in (self.striker_right, self.striker_left):
             striker.rotateTo(0)
             striker.rot_velocity = 0
@@ -717,30 +929,27 @@ class PONGGAME(Game):
         self._reset()
 
     def _handle_key(self, event):
-        if event.type == pygame.KEYDOWN:
-            down = True
-        elif event.type == pygame.KEYUP:
-            down = False
-        if event.key in (pygame.K_UP,):
-            self.p1_up = down
+        key = Key(event)
+        if key in (pygame.K_UP,):
+            self.p1_up = key.down
         elif event.key in (pygame.K_DOWN,):
-            self.p1_dn = down
+            self.p1_dn = key.down
         elif event.key in (pygame.K_RIGHT,):
-            self.p1_rt = down
+            self.p1_rt = key.down
         elif event.key in (pygame.K_LEFT,):
-            self.p1_lt = down
+            self.p1_lt = key.down
         elif event.key in (pygame.K_w,):
-            self.p2_up = down
+            self.p2_up = key.down
         elif event.key in (pygame.K_s,):
-            self.p2_dn = down
+            self.p2_dn = key.down
         elif event.key in (pygame.K_a,):
-            self.p2_lt = down
+            self.p2_lt = key.down
         elif event.key in (pygame.K_d,):
-            self.p2_rt = down
-        elif event.key in (pygame.K_p,) and down:
+            self.p2_rt = key.down
+        elif key in (pygame.K_p,) and key.down:
             self._pause = not self._pause
             self._handle_pause()
-        elif event.key in (pygame.K_r,) and down:
+        elif key in (pygame.K_r,) and key.down:
             self._restart()
 
     def _update(self):
@@ -784,8 +993,9 @@ class PONGGAME(Game):
 # MAIN
 def main():
     pygame.init()
-    game = PONGGAME()
-    game.start()
+    window = Window()
+    window.addGame(PONGGAME())
+    window.start()
     pygame.quit()
 
 if __name__ == "__main__":
