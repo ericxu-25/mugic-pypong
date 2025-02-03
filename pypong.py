@@ -24,6 +24,8 @@ class Color:
     black = (0,0,0)
     white = (255, 255, 255)
     green = (0, 255, 0)
+    red = (255, 0, 0)
+    blue = (0, 0, 255)
 
 WIDTH, HEIGHT = 1300, 600
 
@@ -281,32 +283,16 @@ class TextSprite(GameSprite):
         self._renderText()
         return self
 
-class Game:
-    def __init__(self, w = None, h = None):
-        self.name = "game"
+class Screen:
+    def __init__(self, w = None, h = None, padding = None):
+        self.name = "screen"
         self.sprites = pygame.sprite.LayeredDirty()
         self._pause = False
-        padding = (10, 10, 10, 10)
-        self._window = Window(self)
-        if w == None: w = WIDTH
-        if h == None: h = HEIGHT
+        self._window = Window()
+        if w == None: w = self._window._width
+        if h == None: h = self._window._height
+        if padding == None: padding = (0, 0, 0, 0)
         self._init_screen(padding, w, h)
-
-    def _init_screen(self, padding, w, h):
-        self._padding = padding
-        self.screen_ratio = w/h
-        self._width = w - padding[0] - padding[1]
-        self._height = h - padding[2] - padding[3]
-        self._scale = 1
-        self.base_background = pygame.Surface((w, h))
-        self.base_background.fill(Color.green)
-        game_space = pygame.Rect((padding[0], padding[1]),
-                                 (self._width, self._height))
-        pygame.draw.rect(self.base_background,
-                         Color.black,
-                         game_space)
-        self.background = self.base_background
-        self.refresh()
 
     @property
     def width(self):
@@ -315,56 +301,6 @@ class Game:
     @property
     def height(self):
         return self._scale*(self._height + self._padding[1] + self._padding[2])
-
-    def refresh(self):
-        self._redraw()
-
-    def start(self):
-        self.refresh()
-        self._reset()
-
-    def _add_sprite(self, *sprites):
-        self.sprites.add(sprites)
-
-    def _resize(self, scale):
-        self._scale = scale
-        self.background = pygame.transform.scale(
-            self.base_background, (self.width, self.height))
-        for sprite in self.sprites:
-            sprite._update_image()
-        self.refresh()
-
-    def _draw_sprites(self):
-        self.sprites.clear(self.screen, self.background)
-        self.sprites.draw(self.screen)
-        pygame.display.update()
-
-    def _redraw(self):
-        scale = self._scale
-        self.screen = pygame.Surface((self.width, self.height))
-        self.screen.blit(self.background, (0, 0))
-        for sprite in self.sprites:
-            sprite._redraw()
-        self._draw_sprites()
-
-    def _handle_event(self, event):
-        if event.type in (pygame.KEYDOWN, pygame.KEYUP):
-            self._handle_key(event)
-
-    def unpause(self):
-        self._pause = False
-
-    def pause(self):
-        self._pause = True
-
-    def _game_loop(self):
-        self._update()
-        self.sprites.update()
-        self._draw_sprites()
-
-    def _tick(self):
-        if self._pause == False:
-            self._game_loop()
 
     @property
     def left(self):
@@ -390,11 +326,72 @@ class Game:
     def fps(self, fps):
         self._window.fps = fps
 
+    def _init_screen(self, padding, w, h):
+        self._padding = padding
+        self.screen_ratio = w/h
+        self._width = w - padding[0] - padding[1]
+        self._height = h - padding[2] - padding[3]
+        self._scale = 1
+        self.base_background = pygame.Surface((w, h))
+        self.base_background.fill(Color.green)
+        game_space = pygame.Rect((padding[0], padding[1]),
+                                 (self._width, self._height))
+        pygame.draw.rect(self.base_background,
+                         Color.black,
+                         game_space)
+        self.background = self.base_background
+        self.screen = pygame.Surface((self.width, self.height))
+        self._redraw()
+
+    def _redraw(self):
+        self.screen.blit(self.background, (0, 0))
+        for sprite in self.sprites:
+            sprite._redraw()
+        self._draw_sprites()
+
+    def _add_sprite(self, *sprites):
+        self.sprites.add(sprites)
+
+    def _resize(self, scale):
+        self._scale = scale
+        self.background = pygame.transform.scale(
+            self.base_background, (self.width, self.height))
+        for sprite in self.sprites:
+            sprite._update_image()
+        self.refresh()
+
+    def _draw_sprites(self):
+        self.sprites.draw(self.screen, bgsurf=self.background)
+
+    def _handle_event(self, event):
+        if event.type in (pygame.KEYDOWN, pygame.KEYUP):
+            self._handle_key(event)
+
+    def _render(self):
+        self._draw_sprites()
+
+    def refresh(self):
+        self._redraw()
+
+    def resize(self, w, h, padding = None):
+        if padding == None:
+            padding = self._padding
+        scale = self._scale
+        self._init_screen(padding, w, h)
+        self._resize(scale)
+
     # functions to override
     def _handle_key(self, event):
         return
 
+class Game(Screen):
+    def __init__(self, w = None, h = None, padding = None):
+        super().__init__(w, h, padding)
+        self.name = "game"
+
+    # functions to override
     def _update(self):
+        # game logic would go here
         return
 
     def _reset(self):
@@ -406,12 +403,29 @@ class Game:
     def _load(self):
         return
 
+    def start(self):
+        self.refresh()
+        self._reset()
+
+    def unpause(self):
+        self._pause = False
+
+    def pause(self):
+        self._pause = True
+
+    def _game_loop(self):
+        self._update()
+        self.sprites.update()
+
+    def _tick(self):
+        if self._pause == False:
+            self._game_loop()
+
 class Window:
-    def __new__(cls, game = None):
+    def __new__(cls):
         if not hasattr(cls, 'singleton'):
             cls.singleton = super().__new__(cls)
             cls.singleton.initialize()
-        if game != None: cls.singleton.addGame(game)
         return cls.singleton
 
     def initialize(self):
@@ -420,27 +434,25 @@ class Window:
         self.name = "Nameless Window"
         self.vsync = 1
         self.games = set()
-        self.focused_games = set()
+        self.screens = set()
+        self.focused_screens= set()
         self.fps = 30
-        padding = [10, 10, 10, 10]
-        self._init_window(padding, WIDTH, HEIGHT)
+        self._init_window(WIDTH, HEIGHT)
 
-
-    def _init_window(self, padding, w, h):
-        self._width = WIDTH
-        self._height = HEIGHT
-        self._padding = padding
+    def _init_window(self, w, h):
+        self._width = w
+        self._height = h
         self.screen_ratio = self._width / self._height
         self._scale = 1
         self.base_background = pygame.Surface((w, h))
         self.base_background.fill(Color.white)
-        self._resize_window(WIDTH, HEIGHT)
+        self._resize_window(w, h)
 
     def _handle_events(self):
         for event in pygame.event.get():
             self._handle_event(event)
-            for game in self.focused_games:
-                game._handle_event(event)
+            for screen in self.focused_screens:
+                screen._handle_event(event)
 
     def _handle_event(self, event):
         if event.type == pygame.QUIT:
@@ -457,13 +469,16 @@ class Window:
            self.quit()
 
     def _redraw(self):
-        for game in self.games:
-            game._redraw()
+        for screen in self.screens:
+            screen._redraw()
 
-    def _render_games(self):
+    def _update_games(self):
         for game in self.games:
             game._tick()
-            self.window.blit(game.screen, game.window_position)
+
+    def _render_screens(self):
+        for screen in self.screens:
+            screen._render()
         pygame.display.update()
 
     def _resize_window(self, w, h):
@@ -486,17 +501,26 @@ class Window:
                 self.base_background,
                 (WIDTH, HEIGHT))
         self.window.blit(self.background, (0, 0))
-        for game in self.games:
-            game._resize(self._scale)
-            self._update_game_position(game)
+        for screen in self.screens:
+            screen._resize(self._scale)
+            self._update_screen_position(screen)
         self.refresh()
 
-    def _update_game_position(self, game):
-        game.window_position = (game._window_position[0] * self._scale,
-                                game._window_position[1] * self._scale)
+    def _update_screen_position(self, screen):
+        screen.window_position = (screen._window_position[0] * self._scale,
+                                  screen._window_position[1] * self._scale)
+        screen_rect = pygame.Rect(screen.window_position,
+                                  (screen.width, screen.height))
+        screen.screen = self.window.subsurface(screen_rect)
+        screen.refresh()
+
+    def rescale(self, w, h):
+        scale = self._scale
+        self._init_window(w, h)
+        self._resize_window(w * scale, h * scale)
 
     def refresh(self):
-        self._render_games()
+        self._render_screens()
 
     def setName(name):
         self.name = name
@@ -504,30 +528,40 @@ class Window:
 
     def addGame(self, game: Game, position = (0, 0), focus = True):
         self.games.add(game)
-        self.moveGameTo(game, *position)
-        self.focusGame(game, focus)
+        self.addScreen(game, position, focus)
+
+    def addScreen(self, screen, position = (0, 0), focus = True):
+        self.screens.add(screen)
+        self.moveScreenTo(screen, *position)
+        self.focus(screen, focus)
+        return self
+
+    def removeScreen(self, screen):
+        self.screens.remove(screen)
+        self.focused_screens.remove(screen)
         return self
 
     def removeGame(self, game):
         self.games.remove(game)
+        self.removeScreen(game)
 
-    def focusGame(self, game: Game, focus):
-        if focus: self.focused_games.add(game)
-        else: self.focused_games.remove(game)
+    def focus(self, screen, focus):
+        if focus: self.focused_screens.add(screen)
+        else: self.focused_screens.remove(screen)
 
-    def moveGameTo(self, game, x, y):
-        game._window_position = (x, y)
-        self._update_game_position(game)
+    def moveScreenTo(self, screen, x, y):
+        screen._window_position = (x, y)
+        self._update_screen_position(screen)
 
-    def moveGame(self, game, dx, dy):
-        game._window_position = (game.window_position + dx,
-                                game.window_position + dy)
-        self._update_game_position(game)
+    def moveScreen(self, screen, dx, dy):
+        screen._window_position = (screen.window_position + dx,
+                                screen.window_position + dy)
+        self._update_screen_position(screen)
 
-    def moveGameCenterTo(self, game, cx, cy):
-        game._window_position = (cx - game._width//2,
-                                cy - game._height//2)
-        self._update_game_position(game)
+    def moveScreenCenterTo(self, screen, cx, cy):
+        screen._window_position = (cx - screen._width//2,
+                                cy - screen._height//2)
+        self._update_screen_position(screen)
 
     def start(self):
         for game in self.games:
@@ -542,7 +576,8 @@ class Window:
 
     def _tick(self):
         self._handle_events()
-        self._render_games()
+        self._update_games()
+        self._render_screens()
         last_tick = self.clock.tick(self.fps)
 
 # PONG implementation
@@ -665,8 +700,7 @@ class Ball(GameSprite):
                 self.game._scoreOnPlayer(striker)
 
     def bounceOnStrikers(self):
-        strikers = self.game.goals.keys()
-        for striker in strikers:
+        for striker in self.game.strikers:
             if pygame.sprite.collide_mask(self, striker):
                 self._bounceOnStriker(striker)
 
@@ -815,15 +849,16 @@ class Ball(GameSprite):
             self.bounceOnStrikers()
         # self.scoreOnPlayers()
 
-class PONGGAME(Game):
-    def __init__(self):
-        super().__init__()
+class PongGame(Game):
+    def __init__(self, w = None, h = None):
+        super().__init__(w, h)
         self.name = "pong"
         self.fps = 60
         self._initialize_sprites()
         self._initialize_controls()
 
     def _initialize_sprites(self):
+        # initialize strikers
         striker_size = (100, 30)
         striker_speed = 10
         striker_accel = 10
@@ -845,6 +880,16 @@ class PONGGAME(Game):
                 striker_power,
                 striker_grip,
                 striker_elasticity)
+        self.striker_left = Striker(self)
+        self.striker_right = Striker(self)
+        self.striker_left.setup(*striker_parameters)
+        self.striker_right.setup(*striker_parameters)
+        self._add_sprite(self.striker_left)
+        self._add_sprite(self.striker_right)
+        self.strikers = pygame.sprite.Group()
+        self.strikers.add(self.striker_left, self.striker_right)
+
+        # initialize ball
         ball_speed = 10
         ball_color = Color.white
         ball_size = 10
@@ -853,14 +898,10 @@ class PONGGAME(Game):
                            ball_color,
                            ball_size,
                            ball_mass)
-        self.striker_left = Striker(self)
-        self.striker_right = Striker(self)
-        self.striker_left.setup(*striker_parameters)
-        self.striker_right.setup(*striker_parameters)
         self.ball = Ball(self).setup(*ball_parameters)
-        self._add_sprite(self.striker_left)
-        self._add_sprite(self.striker_right)
         self._add_sprite(self.ball)
+
+        # setup striker goals
         goal_length = 10
         self.goals = {self.striker_left: None,
                       self.striker_right: None}
@@ -868,6 +909,8 @@ class PONGGAME(Game):
             (-self._width, goal_length)
         self.goals[self.striker_right] = \
             (self._width - goal_length, 2*self._width)
+
+        # setup score text
         score_text_size = 100
         self.s1_score_text = TextSprite(self).setFormatString("{}")
         self.s2_score_text = TextSprite(self).setFormatString("{}")
@@ -878,6 +921,8 @@ class PONGGAME(Game):
         self.s1_score = 0
         self.s2_score = 0
         self._update_score()
+
+        # setup menu text
         self.menu_title_text = TextSprite(self)
         self._add_sprite(self.menu_title_text)
         self.menu_title_text.hide()
@@ -993,8 +1038,9 @@ class PONGGAME(Game):
 # MAIN
 def main():
     pygame.init()
+    PONG = PongGame(900, 600)
     window = Window()
-    window.addGame(PONGGAME())
+    window.addGame(PONG, (200, 0))
     window.start()
     pygame.quit()
 
