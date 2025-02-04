@@ -1,7 +1,8 @@
 import time
 import pygame
 import math
-from collections import namedtuple
+import random
+import colorsys
 # import mugic_helper
 # pypong stuff would go here
 
@@ -11,10 +12,9 @@ from collections import namedtuple
 # * https://stackoverflow.com/questions/11603222/allowing-resizing-window-pygame
 
 # TODO list
-# * advanced ball physics (spin, bounce)
-# * rotating striker
-# * springy striker
+# * anti-ball-stuck procedure
 # * mugic controller registration debug
+# * springy striker (striker x velocity)
 
 # GLOBALS
 pygame.font.init()
@@ -27,9 +27,20 @@ class Color:
     red = (255, 0, 0)
     blue = (0, 0, 255)
 
+    _random_hue = random.random()
+
+    @classmethod
+    def random(cls):
+        cls._random_hue = ((cls._random_hue * 360 + random.randint(50, 100))
+                           % 360 / 360.0)
+        r, g, b = colorsys.hsv_to_rgb(cls._random_hue, 1, 1)
+        return (r * 255, g * 255, b * 255)
+
 WIDTH, HEIGHT = 1300, 600
 
 # HELPERS
+
+# class to work with pygame keyevents
 class Key():
     def __init__(self, key_event):
         if key_event.type == pygame.KEYDOWN:
@@ -50,33 +61,50 @@ class Key():
     def __eq__(self, other):
         return self.key == other
 
-class GameSprite(pygame.sprite.DirtySprite):
-    def __init__(self, game):
+# pygame sprite subclass with dynamic scaling/rotation
+class Sprite(pygame.sprite.DirtySprite):
+    # class variables
+    sprite_id = 0
+    def __init__(self):
         super().__init__()
-        self.game = game
+        # sprite properties
         self.dirty = 1
         self.visible = 1
         self.blendmode = 0
         self.source_rect = None
         self.layer = 0
-        self._width = game._width//4
-        self._height = game._width//4
-        self._x = game._width//2
-        self._y = game._height//2
+        self._width = random.randint(50, 200)
+        self._height = random.randint(50, 200)
+        self._x = random.randint(50, 200)
+        self._y = random.randint(50, 200)
         # sprite image
+        self._scale = 1
         self.rotation = 0
         self.base_image = pygame.Surface((self._width, self._height))
         self.base_image.fill(Color.green)
         self.setImage(self.base_image)
         self.rect = self.image.get_rect()
         self.moveCenterTo(self._x, self._y)
+        # debug output
+        Sprite.sprite_id += 1
+        self.name = f"Sprite {self.sprite_id}"
+        self._debug = False
+        self._debug_screen = None
         return self
+
+    @property
+    def scale(self):
+        return self._scale
+
+    @scale.setter
+    def scale(self, val):
+        self._scale = val
 
     def _redraw(self):
         self.dirty = 1 if self.dirty == 0 else 2
 
     def _update_image(self):
-        scale = self.game._scale
+        scale = self.scale
         self.rect.w = self._width * scale
         self.rect.h = self._height * scale
         self.image = pygame.transform.scale(
@@ -103,7 +131,7 @@ class GameSprite(pygame.sprite.DirtySprite):
         self.rect.centery = centery
 
     def _update_position(self):
-        scale = self.game._scale
+        scale = self.scale
         left_padding = self.game._padding[0]
         top_padding = self.game._padding[2]
         self.rect.x = (self._x + left_padding) * scale
@@ -182,6 +210,29 @@ class GameSprite(pygame.sprite.DirtySprite):
         self._redraw()
         return self
 
+    def debugPrint(self, *args, **kwargs):
+        if self._debug:
+            print("["+self.name+"]", *args, **kwargs)
+
+    def debugFunction(self, *args, **kwargs):
+        if self._debug:
+            func(*args, **kwargs)
+
+    def debugDraw(self, func, *args, **kwargs):
+        if self._debug and self._debug_screen != None:
+            func(self._debug_screen, *args, **kwargs)
+
+
+class GameSprite(Sprite):
+    def __init__(self, game):
+        self.game = game
+        super().__init__()
+        self.name = f"GameSprite {self.sprite_id}"
+
+    @property
+    def scale(self):
+        return self.game._scale
+
     def inBounds(self):
         if self._y < self.game.top:
             return False
@@ -193,12 +244,15 @@ class GameSprite(pygame.sprite.DirtySprite):
             return False
         return True
 
+    # put Sprite logic in here
     def update(self):
         return
 
+# sprite used to display formatted text
 class TextSprite(GameSprite):
     def __init__(self, game):
         super().__init__(game)
+        self.name = f"TextSprite {TextSprite.sprite_id}"
         self.layer = 2
         self.format_str = "text_sprite: {}"
         self.fontsize = 10
@@ -283,24 +337,60 @@ class TextSprite(GameSprite):
         self._renderText()
         return self
 
+# dynamic resizable surface with sprites
 class Screen:
     def __init__(self, w = None, h = None, padding = None):
         self.name = "screen"
         self.sprites = pygame.sprite.LayeredDirty()
         self._pause = False
         self._window = Window()
+        self._position = (0, 0)
         if w == None: w = self._window._width
         if h == None: h = self._window._height
         if padding == None: padding = (0, 0, 0, 0)
         self._init_screen(padding, w, h)
 
+    def _init_screen(self, padding, w, h):
+        self._padding = padding
+        self.screen_ratio = w/h
+        self._width = w - padding[0] - padding[1]
+        self._height = h - padding[2] - padding[3]
+        self._scale = 1
+        self.base_background = pygame.Surface((w, h))
+        self.base_background.fill(Color.green)
+        game_space = pygame.Rect((padding[0], padding[1]),
+                                 (self._width, self._height))
+        pygame.draw.rect(self.base_background,
+                         Color.black,
+                         game_space)
+        self.background = self.base_background
+        self._screen = pygame.Surface((self.width, self.height))
+        self._redraw()
+
+    @property
+    def screen(self):
+        return self._screen
+
+    @screen.setter
+    def screen(self, new_screen):
+        self._screen = new_screen
+        self._redraw()
+
+    @property
+    def base_width(self):
+        return self._width + self._padding[0] + self._padding[1]
+
     @property
     def width(self):
-        return self._scale*(self._width + self._padding[0] + self._padding[1])
+        return self._scale*(self.base_width)
+
+    @property
+    def base_height(self):
+        return self._height + self._padding[2] + self._padding[3]
 
     @property
     def height(self):
-        return self._scale*(self._height + self._padding[1] + self._padding[2])
+        return self._scale*(self.base_height)
 
     @property
     def left(self):
@@ -322,35 +412,38 @@ class Screen:
     def fps(self):
         return self._window.fps
 
+    @property
+    def position(self):
+        return (self._position[0] * self._scale,
+                self._position[1] * self._scale)
+
+    @property
+    def base_rect(self):
+        return pygame.Rect(self._position,
+                           (self.base_width, self.base_height))
+
+    @property
+    def rect(self):
+        return pygame.Rect(self.position, (self.width, self.height))
+
     @fps.setter
     def fps(self, fps):
         self._window.fps = fps
 
-    def _init_screen(self, padding, w, h):
-        self._padding = padding
-        self.screen_ratio = w/h
-        self._width = w - padding[0] - padding[1]
-        self._height = h - padding[2] - padding[3]
-        self._scale = 1
-        self.base_background = pygame.Surface((w, h))
-        self.base_background.fill(Color.green)
-        game_space = pygame.Rect((padding[0], padding[1]),
-                                 (self._width, self._height))
-        pygame.draw.rect(self.base_background,
-                         Color.black,
-                         game_space)
-        self.background = self.base_background
-        self.screen = pygame.Surface((self.width, self.height))
-        self._redraw()
+    def __str__(self):
+        return f"{self.name}: {self.base_rect}"
 
     def _redraw(self):
-        self.screen.blit(self.background, (0, 0))
+        self._screen.blit(self.background, (0, 0))
         for sprite in self.sprites:
             sprite._redraw()
         self._draw_sprites()
 
     def _add_sprite(self, *sprites):
-        self.sprites.add(sprites)
+        self.sprites.add(*sprites)
+
+    def _remove_sprite(self, *sprites):
+        self.sprites.remove(*sprites)
 
     def _resize(self, scale):
         self._scale = scale
@@ -361,7 +454,7 @@ class Screen:
         self.refresh()
 
     def _draw_sprites(self):
-        self.sprites.draw(self.screen, bgsurf=self.background)
+        self.sprites.draw(self._screen, bgsurf=self.background)
 
     def _handle_event(self, event):
         if event.type in (pygame.KEYDOWN, pygame.KEYUP):
@@ -369,6 +462,8 @@ class Screen:
 
     def _render(self):
         self._draw_sprites()
+        if self._screen.get_parent() is None:
+            self._window.window.blit(self._screen, self.position)
 
     def refresh(self):
         self._redraw()
@@ -384,6 +479,110 @@ class Screen:
     def _handle_key(self, event):
         return
 
+# Screen with interface to display many things in tabs
+class DisplayScreen(Screen):
+    def __init__(self, w = None, h = None, padding = None):
+        self.tabs = list()
+        super().__init__(w, h, padding)
+        self.base_background.fill(Color.red)
+
+    # returns the next available tab position (left to right)
+    def _get_next_tab_position(self, tab_rect):
+        if len(self.tabs) == 0: return (0, 0)
+        self.tabs = sorted(self.tabs, key=lambda x: x._position)
+        last_tab = self.tabs[-1]
+        tab_rect.topleft = last_tab.base_rect.topleft
+        tab_rect.move_ip(last_tab.base_width, 0)
+        if not self.base_rect.contains(tab_rect):
+            tab_rect.x = 0
+            tab_rect.y += last_tab.base_height
+        if not self.base_rect.contains(tab_rect):
+            print("addTab: Error fitting next tab!")
+        return tab_rect.topleft
+
+    def addTab(self, w, h = None, padding = (5, 5, 5, 5), position = None):
+        if h == None: h = w
+        new_tab = Screen(w, h, padding)
+        if position == None:
+            position = self._get_next_tab_position(new_tab.base_rect)
+        new_tab._position = position
+        new_tab.base_background.fill(Color.random())
+        self.tabs.append(new_tab)
+        tab_num = len(self.tabs) - 1
+        new_tab.name = f"Tab {tab_num}"
+        self._resize_tabs()
+        return tab_num
+
+    def totalTabs(self):
+        return len(self.tabs)
+
+    def splitTabs(self, rows, columns=1):
+        tab_width = self._width/columns
+        tab_height = self._height/rows
+        for row in range(rows):
+            for col in range(columns):
+                self.addTab(tab_width, tab_height)
+
+
+    def getTab(self, tab_num) -> pygame.Surface:
+        if len(self.tabs) == 0: return None
+        if tab_num <= 0: return None
+        if len(self.tabs) >= tab_num: return None
+        return self.tabs[tab]
+
+    def _render(self):
+        for tab in self.tabs:
+            tab._draw_sprites()
+            if tab.screen.get_parent == None:
+                self.screen.blit(tab.screen, tab.position)
+        super()._render()
+
+    def _resize_tabs(self):
+        for tab in self.tabs:
+            tab._resize(self._scale)
+
+    def _resize(self, scale):
+        super()._resize(scale)
+        self._resize_tabs()
+
+    def _redraw(self):
+        super()._redraw()
+        for tab in self.tabs:
+            tab._redraw()
+
+    @property
+    def screen(self):
+        return self._screen
+
+    @screen.setter
+    def screen(self, new_screen):
+        self._screen = new_screen
+        self._update_tab_subsurfaces()
+        self._redraw()
+
+    def _update_tab_subsurfaces(self):
+        for tab in self.tabs:
+            try:
+                tab.screen = self.screen.subsurface(tab.rect)
+            except ValueError as e:
+                print("ValueError:", e)
+                print("\twhile attempting to update tab:", tab)
+                tab.screen = pygame.Surface((tab.width, tab.height))
+
+    def writeNewText(self, text, offset=(0, 0), tab = None):
+        if type(tab) is int: tab = self.getTab(tab)
+        if tab == None: tab = self
+        # automatically create a TextSprite if text is string
+        if type(text) is str:
+            text_sprite = TextSprite(self)
+            text_sprite.setFormatString("{}").setText(text)
+            text = text_sprite
+        if isinstance(text, TextSprite):
+            tab._add_sprite(text)
+        else: return None
+        return text
+
+# Screen which includes basic game logic
 class Game(Screen):
     def __init__(self, w = None, h = None, padding = None):
         super().__init__(w, h, padding)
@@ -395,6 +594,7 @@ class Game(Screen):
         return
 
     def _reset(self):
+        # set to starting state
         return
 
     def _save(self):
@@ -403,7 +603,7 @@ class Game(Screen):
     def _load(self):
         return
 
-    def start(self):
+    def _start(self):
         self.refresh()
         self._reset()
 
@@ -413,6 +613,9 @@ class Game(Screen):
     def pause(self):
         self._pause = True
 
+    def start(self):
+        self._window.start()
+
     def _game_loop(self):
         self._update()
         self.sprites.update()
@@ -421,12 +624,22 @@ class Game(Screen):
         if self._pause == False:
             self._game_loop()
 
+# Screen manager
 class Window:
     def __new__(cls):
         if not hasattr(cls, 'singleton'):
             cls.singleton = super().__new__(cls)
             cls.singleton.initialize()
         return cls.singleton
+
+    @property
+    def name(self):
+        return self._name
+
+    @name.setter
+    def name(self, name):
+        self._name = name
+        pygame.display.set_caption(self._name)
 
     def initialize(self):
         global WIDTH
@@ -459,7 +672,6 @@ class Window:
             self.quit()
         elif event.type == pygame.VIDEORESIZE:
             self._resize_window(event.w, event.h)
-            self._redraw()
         elif event.type in (pygame.KEYDOWN, pygame.KEYUP):
             self._handle_key(event)
 
@@ -503,16 +715,16 @@ class Window:
         self.window.blit(self.background, (0, 0))
         for screen in self.screens:
             screen._resize(self._scale)
-            self._update_screen_position(screen)
+            self._update_screen_subsurface(screen)
         self.refresh()
 
-    def _update_screen_position(self, screen):
-        screen.window_position = (screen._window_position[0] * self._scale,
-                                  screen._window_position[1] * self._scale)
-        screen_rect = pygame.Rect(screen.window_position,
-                                  (screen.width, screen.height))
-        screen.screen = self.window.subsurface(screen_rect)
-        screen.refresh()
+    def _update_screen_subsurface(self, screen):
+        try:
+            screen.screen = self.window.subsurface(screen.rect)
+        except ValueError as e:
+            print("ValueError:", e)
+            print("\twhile attempting to update screen:", screen.name)
+            screen.screen = pygame.Surface((screen.width, screen.height))
 
     def rescale(self, w, h):
         scale = self._scale
@@ -520,6 +732,8 @@ class Window:
         self._resize_window(w * scale, h * scale)
 
     def refresh(self):
+        for screen in self.screens:
+            screen.refresh()
         self._render_screens()
 
     def setName(name):
@@ -539,6 +753,7 @@ class Window:
     def removeScreen(self, screen):
         self.screens.remove(screen)
         self.focused_screens.remove(screen)
+        screen._position = (0, 0)
         return self
 
     def removeGame(self, game):
@@ -550,22 +765,22 @@ class Window:
         else: self.focused_screens.remove(screen)
 
     def moveScreenTo(self, screen, x, y):
-        screen._window_position = (x, y)
-        self._update_screen_position(screen)
+        screen._position = (x, y)
+        self._update_screen_subsurface(screen)
 
     def moveScreen(self, screen, dx, dy):
-        screen._window_position = (screen.window_position + dx,
-                                screen.window_position + dy)
-        self._update_screen_position(screen)
+        screen._position = (screen.position + dx,
+                                screen.position + dy)
+        self._update_screen_subsurface(screen)
 
     def moveScreenCenterTo(self, screen, cx, cy):
-        screen._window_position = (cx - screen._width//2,
+        screen._position = (cx - screen._width//2,
                                 cy - screen._height//2)
-        self._update_screen_position(screen)
+        self._update_screen_subsurface(screen)
 
     def start(self):
         for game in self.games:
-            game.start()
+            game._start()
         self.clock = pygame.time.Clock()
         self.stop = False
         while not self.stop:
@@ -758,42 +973,23 @@ class Ball(GameSprite):
                striker.rect.centery - future_striker_image.get_height()/2)
             mask_offset -= pygame.math.Vector2(self.rect.x, self.rect.y)
             hitting = self.mask.overlap(future_striker_mask, mask_offset)
-
-            # debug drawing
-            self.game.screen.blit(self.game.background, (0, 0))
-            self.game.screen.blit(self.image, (400,400))
-            self.game.screen.blit(future_striker_image, (400 + mask_offset.x,
-                                                         400 + mask_offset.y))
             if hitting == None:
                 continue
             else:
-                print(self.mask.overlap_area(future_striker_mask, mask_offset))
                 break
         if hitting == None:
-            print("not rotate hit!")
             return final_vector
-        else:
-            print("rotate hit!")
         # then, determine the direction and angle of the hit
         striker_rot_hit_vector = striker_normal
         future_offset = offset_vector.rotate(striker.rot_velocity)
         rot_hit_speed = ((future_offset - offset_vector).magnitude()
                          * striker.elasticity / self.mass)
         if striker_rot_hit_vector.length() == 0:
-            print("error rotate hit")
             return final_vector
         striker_rot_hit_vector.scale_to_length(rot_hit_speed)
-        print(rot_hit_speed)
-        print(striker_rot_hit_vector)
         if striker.rot_velocity > 0: striker.rot_velocity -= rot_hit_speed
         else: striker.rot_velocity += rot_hit_speed
-
-        # debug drawing
-        line = pygame.draw.line(self.game.screen, Color.green,
-                                (400, 400),
-                                (400 + striker_rot_hit_vector.x * 30,
-                                 400 + striker_rot_hit_vector.y * 30))
-        # final_vector += striker_rot_hit_vector
+        final_vector += striker_rot_hit_vector
         return final_vector
 
 
@@ -806,19 +1002,19 @@ class Ball(GameSprite):
         # reflect off the striker
         reflect_vector = self.velocity.copy().reflect(striker_normal)
         reflect_vector.scale_to_length(self.speed * striker.elasticity)
-        # final_vector = reflect_vector
+        final_vector = reflect_vector
         # apply modifications based on the striker's attributes
         # modification 1: striker power
         striker_hit_vector = striker_normal.copy()
         striker_hit_vector.scale_to_length(striker.power/self.mass)
-        # final_vector += striker_hit_vector
+        final_vector += striker_hit_vector
         # modification 2: striker grip
         grip_vector = pygame.math.Vector2(0,
                 striker.velocity * striker.grip / self.mass)
-        grip_vector = grip_vector.rotate(-striker.rotation)
+        grip_vector *= abs(striker_normal.x)
         self.spin += grip_vector.y
-        striker.velocity -= grip_vector.y * self.mass
-        # final_vector += grip_vector
+        self.spin *= striker.elasticity
+        final_vector += grip_vector
         # modification 3: striker rotation
         final_vector += self._rotateHitOnStriker(striker)
         # apply final calculated vector
@@ -826,11 +1022,23 @@ class Ball(GameSprite):
             if striker_normal.magnitude() == 0:
                 self.velocity = offset_vector
             else:
-                # self.velocity = striker_hit_vector
-                self.velocity *= -1
+                self.velocity = striker_hit_vector
         else:
             self.velocity = final_vector
+        # draw the impact onto the side panel
+        # TODO debug drawing
         self.speed = self.velocity.magnitude()
+
+    def _spin_effect(self):
+        if abs(self.spin) < self.rolling_friction:
+            self.spin = 0
+            return
+        angle_change = self.spin / self.speed / self.mass / self.rolling_friction / 3
+        self.velocity.rotate_ip(angle_change/self._substeps)
+        spin_friction = (self.rolling_friction/self._substeps)
+        if self.spin > 0: self.spin -= spin_friction
+        else:
+            self.spin += spin_friction
 
     def roll(self):
         self.speed -= self.rolling_friction/self._substeps
@@ -840,33 +1048,47 @@ class Ball(GameSprite):
         self.velocity.scale_to_length(self.speed * fps_ratio)
         self.move(float(self.velocity.x/self._substeps),
                   float(self.velocity.y/self._substeps))
-        #TODO spin logic
+        self._spin_effect()
 
     def update(self):
         for i in range(self._substeps):
             self.roll()
             self.bounceOnCeiling()
             self.bounceOnStrikers()
-        # self.scoreOnPlayers()
+        self.scoreOnPlayers()
 
 class PongGame(Game):
-    def __init__(self, w = None, h = None):
-        super().__init__(w, h)
+    def __init__(self, w, h = None):
+        adjusted_width = w * 2 // 3
+        side_width = (w - adjusted_width) / 2.0
+        super().__init__(adjusted_width, h, padding=(20, 20, 10, 10))
+        self.base_background.fill(Color.black)
         self.name = "pong"
         self.fps = 60
+        self._initialize_screens(side_width)
         self._initialize_sprites()
         self._initialize_controls()
+        self._window.addGame(self, (side_width, 0))
+        self._window.name = "Mugical Pong"
+
+    def _initialize_screens(self, w):
+        self.debug_screen_left = DisplayScreen(w, self.height)
+        self.debug_screen_left.splitTabs(3)
+        self.debug_screen_right = DisplayScreen(w, self.height)
+        self.debug_screen_right.splitTabs(3)
+        self._window.addScreen(self.debug_screen_left, (0, 0))
+        self._window.addScreen(self.debug_screen_right, (w + self.width, 0))
 
     def _initialize_sprites(self):
         # initialize strikers
-        striker_size = (100, 30)
-        striker_speed = 10
-        striker_accel = 10
+        striker_size = (50, 150)
+        striker_speed = 15
+        striker_accel = 8
         striker_rot_speed = 10
         striker_rot_accel = 10
         striker_color = Color.white
         striker_friction = 10
-        striker_power = 10
+        striker_power = 7
         striker_grip = 10
         striker_elasticity = 10
         striker_parameters = (
@@ -888,9 +1110,13 @@ class PongGame(Game):
         self._add_sprite(self.striker_right)
         self.strikers = pygame.sprite.Group()
         self.strikers.add(self.striker_left, self.striker_right)
+        self.striker_right._debug = True
+        self.striker_right._debug_screen = self.debug_screen_right
+        self.striker_left._debug = True
+        self.striker_left._debug_screen = self.debug_screen_left
 
         # initialize ball
-        ball_speed = 10
+        ball_speed = 8
         ball_color = Color.white
         ball_size = 10
         ball_mass = 10
@@ -953,7 +1179,6 @@ class PongGame(Game):
         center_right = self._width - center_left
         self.striker_left.moveCenterTo(left, middle)
         self.striker_right.moveCenterTo(right, middle)
-        print(right, middle)
         for striker in (self.striker_right, self.striker_left):
             striker.rotateTo(0)
             striker.rot_velocity = 0
@@ -961,6 +1186,7 @@ class PongGame(Game):
         self.ball.moveCenterTo(center, middle)
         self.ball.velocity = pygame.math.Vector2(1, 0)
         self.ball.speed = self.ball.min_speed
+        self.ball.spin = 0
         self.s1_score_text.moveCenterTo(center_left,
                                         top_middle)
         self.s2_score_text.moveCenterTo(center_right,
@@ -1038,10 +1264,8 @@ class PongGame(Game):
 # MAIN
 def main():
     pygame.init()
-    PONG = PongGame(900, 600)
-    window = Window()
-    window.addGame(PONG, (200, 0))
-    window.start()
+    PONG = PongGame(WIDTH, HEIGHT)
+    PONG.start()
     pygame.quit()
 
 if __name__ == "__main__":
