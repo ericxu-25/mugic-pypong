@@ -6,15 +6,22 @@ import colorsys
 # import mugic_helper
 # pypong stuff would go here
 
+# Basic controls (keyboard)
+# - up, left, down, right, rotleft, rotright
+# p1 = wasdqe OR wasdzx or wasdcv
+# p2 = arrows<> OR ijkluo
+
 # Resources used as reference:
 # * geeksforgeeks.org/create-a-pong-game-in-python-pygame/
 # * https://www.pygame.org/docs/
 # * https://stackoverflow.com/questions/11603222/allowing-resizing-window-pygame
 
 # TODO list
-# * anti-ball-stuck procedure
-# * mugic controller registration debug
+# * smaller ball, bigger screen
+# * debug windows (1: game, 2: controller, 3: more controller)
+# * mugic controller module (calibration + implementation)
 # * springy striker (striker x velocity)
+# * port to godot
 
 # GLOBALS
 pygame.font.init()
@@ -33,7 +40,7 @@ class Color:
     def random(cls):
         cls._random_hue = ((cls._random_hue * 360 + random.randint(50, 100))
                            % 360 / 360.0)
-        r, g, b = colorsys.hsv_to_rgb(cls._random_hue, 1, 1)
+        r, g, b = colorsys.hsv_to_rgb(cls._random_hue, 1, 0.9)
         return (r * 255, g * 255, b * 255)
 
 WIDTH, HEIGHT = 1300, 600
@@ -65,8 +72,10 @@ class Key():
 class Sprite(pygame.sprite.DirtySprite):
     # class variables
     sprite_id = 0
-    def __init__(self):
+    def __init__(self, screen):
         super().__init__()
+        # screen the sprite will be adjusted to
+        self.screen = screen
         # sprite properties
         self.dirty = 1
         self.visible = 1
@@ -100,6 +109,18 @@ class Sprite(pygame.sprite.DirtySprite):
     def scale(self, val):
         self._scale = val
 
+    @property
+    def _rect(self):
+        return pygame.Rect(self._x, self._y, self._width, self._height)
+
+    @_rect.setter
+    def _rect(self, rect):
+        self._x = rect.x
+        self._y = rect.y
+        self._width = rect.w
+        self._height = rect.h
+        self._update_image()
+
     def _redraw(self):
         self.dirty = 1 if self.dirty == 0 else 2
 
@@ -132,8 +153,8 @@ class Sprite(pygame.sprite.DirtySprite):
 
     def _update_position(self):
         scale = self.scale
-        left_padding = self.game._padding[0]
-        top_padding = self.game._padding[2]
+        left_padding = self.screen._padding[0]
+        top_padding = self.screen._padding[2]
         self.rect.x = (self._x + left_padding) * scale
         self.rect.y = (self._y + top_padding) * scale
         self._redraw()
@@ -173,6 +194,10 @@ class Sprite(pygame.sprite.DirtySprite):
         self._y = y - self._height // 2
         self._update_position()
 
+    @property
+    def scale(self):
+        return self.screen._scale
+
     def resize(self, w, h = None):
         if h == None:
             self.resize(w, self._height * w // self._width)
@@ -200,6 +225,17 @@ class Sprite(pygame.sprite.DirtySprite):
         self.resize(self.rect.w, self.rect.h)
         return self
 
+    def inBounds(self):
+        if self._y < self.screen.top:
+            return False
+        elif self._y + self._height > self.screen.bottom:
+            return False
+        elif self._x < self.screen.left:
+            return False
+        elif self._x + self._width > self.screen.right:
+            return False
+        return True
+
     def hide(self):
         self.visible = 0
         self._redraw()
@@ -214,44 +250,40 @@ class Sprite(pygame.sprite.DirtySprite):
         if self._debug:
             print("["+self.name+"]", *args, **kwargs)
 
-    def debugFunction(self, *args, **kwargs):
-        if self._debug:
-            func(*args, **kwargs)
+    def debugFunction(self, func, *args, **kwargs):
+        if not self._debug:
+            return None
+        return func(*args, **kwargs)
 
     def debugDraw(self, func, *args, **kwargs):
-        if self._debug and self._debug_screen != None:
-            func(self._debug_screen, *args, **kwargs)
+        if not self._debug and self._debug_screen == None:
+            return None
+        func(self._debug_screen, *args, **kwargs)
+
+    def debugDrawRefresh(self):
+        if not self._debug and self._debug_screen == None:
+            return None
+        self._debug_screen.refresh()
+
 
 
 class GameSprite(Sprite):
     def __init__(self, game):
         self.game = game
-        super().__init__()
+        super().__init__(game)
         self.name = f"GameSprite {self.sprite_id}"
 
-    @property
-    def scale(self):
-        return self.game._scale
-
-    def inBounds(self):
-        if self._y < self.game.top:
-            return False
-        elif self._y + self._height > self.game.bottom:
-            return False
-        elif self._x < self.game.left:
-            return False
-        elif self._x + self._width > self.game.right:
-            return False
-        return True
-
     # put Sprite logic in here
+    def _reset(self):
+        return
+
     def update(self):
         return
 
 # sprite used to display formatted text
-class TextSprite(GameSprite):
-    def __init__(self, game):
-        super().__init__(game)
+class TextSprite(Sprite):
+    def __init__(self, screen):
+        super().__init__(screen)
         self.name = f"TextSprite {TextSprite.sprite_id}"
         self.layer = 2
         self.format_str = "text_sprite: {}"
@@ -278,10 +310,14 @@ class TextSprite(GameSprite):
         return self
 
     def _renderText(self):
-        text = self.format_str.format(*self.text)
-        text_render = self.font.render(text,
-                                       self.antialias,
-                                       self.color)
+        try:
+            text = self.format_str.format(*self.text[0], **self.text[1])
+        except ValueError as e:
+            text = f"uncompatible format {self.format_str} and {self.text}"
+        text_render = self.font.render(
+                text,
+                self.antialias,
+                self.color)
         self.setImage(text_render)
         self._update_position()
         self._redraw()
@@ -314,11 +350,11 @@ class TextSprite(GameSprite):
         self._renderText()
 
     @property
-    def strikerthrough(self):
+    def strikethrough(self):
         return self.font.strikerthrough
 
-    @strikerthrough.setter
-    def strikerthrough(self, val):
+    @strikethrough.setter
+    def strikethrough(self, val):
         self.font.strikerthrough = val
         self._renderText()
 
@@ -332,8 +368,8 @@ class TextSprite(GameSprite):
         self._renderText()
         return this
 
-    def setText(self, *format_text):
-        self.text = format_text
+    def setText(self, *args, **kwargs):
+        self.text = [args, kwargs]
         self._renderText()
         return self
 
@@ -409,6 +445,18 @@ class Screen:
         return self._height
 
     @property
+    def center(self):
+        return (self._width/2, self._height/2)
+
+    @property
+    def centerx(self):
+        return self._width/2
+
+    @property
+    def centery(self):
+        return self._height/2
+
+    @property
     def fps(self):
         return self._window.fps
 
@@ -448,7 +496,7 @@ class Screen:
     def _resize(self, scale):
         self._scale = scale
         self.background = pygame.transform.scale(
-            self.base_background, (self.width, self.height))
+                self.base_background, (self.width, self.height))
         for sprite in self.sprites:
             sprite._update_image()
         self.refresh()
@@ -527,8 +575,8 @@ class DisplayScreen(Screen):
     def getTab(self, tab_num) -> pygame.Surface:
         if len(self.tabs) == 0: return None
         if tab_num <= 0: return None
-        if len(self.tabs) >= tab_num: return None
-        return self.tabs[tab]
+        if len(self.tabs) <= tab_num: return None
+        return self.tabs[tab_num]
 
     def _render(self):
         for tab in self.tabs:
@@ -576,6 +624,7 @@ class DisplayScreen(Screen):
         if type(text) is str:
             text_sprite = TextSprite(self)
             text_sprite.setFormatString("{}").setText(text)
+            text_sprite.moveTo(tab.centerx, tab.centery)
             text = text_sprite
         if isinstance(text, TextSprite):
             tab._add_sprite(text)
@@ -678,7 +727,7 @@ class Window:
     def _handle_key(self, event):
         key = Key(event)
         if key == pygame.K_ESCAPE:
-           self.quit()
+            self.quit()
 
     def _redraw(self):
         for screen in self.screens:
@@ -705,8 +754,8 @@ class Window:
         WIDTH = round(WIDTH)
         HEIGHT = round(HEIGHT)
         self.window = pygame.display.set_mode(
-                        (WIDTH, HEIGHT),
-                        pygame.RESIZABLE, vsync = self.vsync)
+                (WIDTH, HEIGHT),
+                pygame.RESIZABLE, vsync = self.vsync)
         pygame.display.set_caption(self.name)
         self._scale = (float(WIDTH) /self._width)
         self.background = pygame.transform.scale(
@@ -770,12 +819,12 @@ class Window:
 
     def moveScreen(self, screen, dx, dy):
         screen._position = (screen.position + dx,
-                                screen.position + dy)
+                            screen.position + dy)
         self._update_screen_subsurface(screen)
 
     def moveScreenCenterTo(self, screen, cx, cy):
         screen._position = (cx - screen._width//2,
-                                cy - screen._height//2)
+                            cy - screen._height//2)
         self._update_screen_subsurface(screen)
 
     def start(self):
@@ -808,7 +857,7 @@ class Striker(GameSprite):
         self.rot_speed = 10 * (rot_speed/10.0)
         self.rot_accel = 2 * (rot_accel/10.0)
         self.color = color
-        self.friction = 0.8 * (10.0/friction)
+        self.friction = 0.8 * (10.0/(10 + friction/10))
         self.elasticity = 1.0 - 0.6 / (elasticity/10.0 + 0.6)
         self.power = 8 * (power / 10.0)
         self.grip = 0.5 - 0.5/(2*grip/10.0 + 0.5)
@@ -858,6 +907,73 @@ class Striker(GameSprite):
             self._y = self.game.top
         self._update_position()
 
+    def displayStrikerBounce(self, ball, bounce_data):
+        self.debugDraw(self._draw_striker_bounce, ball, **bounce_data)
+
+    def _init_draw_striker_bounce(self):
+        display = self._debug_screen
+        tab = display.getTab(1)
+        if tab == None:
+            print("error getting tab to draw striker information")
+            return
+        # initialize the text sprites if they haven't been yet
+        if not hasattr(self, '_draw_striker_bounce_text'):
+            text_size = 16
+            self._draw_striker_bounce_text = list()
+            text = self._draw_striker_bounce_text
+            for i in range(2):
+                new_text = display.writeNewText(
+                    "...", tab=tab)
+                text.append(new_text)
+                new_text.setFontSize(text_size)
+                new_text.moveTo(5, 5 + (text_size + 3) * i)
+            text[0].setText("BOUNCE INFORMATION")
+            text[1].setFormatString("ball speed: {:.2f}")
+            text[1].setText(0)
+        else:
+            text = self._draw_striker_bounce_text
+            text[1].setText(0)
+
+    def _reset(self):
+        self.debugFunction(self._init_draw_striker_bounce)
+        self.rotateTo(0)
+        self.rot_velocity = 0
+        self.velocity = 0
+        self.debugDraw(self._draw_striker_bounce, None)
+
+    def _draw_striker_bounce(self, display, ball, **bounce_data):
+        # select the middle display tab
+        display.refresh()
+        tab = display.getTab(1)
+        text = self._draw_striker_bounce_text
+        # draw the striker onto the tab
+        center = (tab.centerx, tab.centery + text[1].rect.y)
+        center_position = (tab.centerx - self.rect.width//2,
+                           tab.centery - self.rect.height//2 + text[1].rect.y)
+        tab.screen.blit(self.image, center_position)
+        if ball == None: return # stop if no data
+        # draw the ball onto the tab
+        scale = self.game._scale
+        ball_position = bounce_data['offset'] * scale
+        ball_position += (center[0] - ball.rect.width//2,
+                          center[1] - ball.rect.height//2)
+        tab.screen.blit(ball.image, ball_position)
+        # write the data onto the tab
+        text[1].setText(bounce_data['speed'])
+        #bounce_data = {"normal": striker_normal,
+        #               "reflect": reflect_vector,
+        #               "grip": grip_vector,
+        #               "final": self.velocity,
+        #               "rotate": rotate_hit_vector,
+        #               "critical": critical,
+        #               "speed": self.speed}
+        # then put the ball and the striker onto the tab
+
+        # draw the different vectors
+        vector_scale = 10
+        return
+
+
     def move(self, x, y):
         super().move(x, y)
         if not self.inBounds():
@@ -871,24 +987,48 @@ class Ball(GameSprite):
         self.velocity = pygame.math.Vector2(1, 0)
 
     def setup(self, speed, color, r, mass):
+        self.speed_value = speed
+        self.speed_increase = 0
         self.min_speed = 10 * (speed/10.0)
         self.speed = self.min_speed
         self.mass = (mass / 10.0)
-        self.rolling_friction = 0.1 *\
-                (speed/10.0) * (1 - 1.0 / (self.mass + 1))
+        self.rolling_friction = (
+                0.1 *
+                (speed/10.0) *
+                (1 - 1.0 / (self.mass + 1)))
         self._substeps = 10 # use substepping for greater simulation accuracy
         self.color = color
         self.r = r
-        ball = pygame.Surface((2 * r, 2 * r))
+        ball = pygame.Surface((2 * r, 2 * r), pygame.SRCALPHA, 32)
         pygame.draw.circle(ball, self.color\
                 , (r, r), r)
         self.setImage(ball)
         return self
 
+    def _increase_speed(self, amount=1):
+        self.speed_increase += amount
+        self.min_speed = 10 * ((self.speed_value + self.speed_increase)/10.0)
+        self.rolling_friction = (
+                0.1 *
+                (self.min_speed/10.0) *
+                (1 - 1.0 / (self.mass + 1)))
+
+    def _reset_speed_increase(self):
+        self._increase_speed(-self.speed_increase)
+
     def _bounce(self, wall_normal):
         self.velocity.reflect_ip(wall_normal)
+        # if too vertical, bounce more horizontal
+        if abs(self.velocity.x*5) < abs(self.velocity.y) \
+                and abs(self.spin) < 1:
+            self.velocity.x = self.velocity.x * 2
+            direction = -1 if self._x > self.game.centerx else 1
+            if abs(self.velocity.x) < 0.1:
+                self.velocity.x = self.min_speed * direction
+            self.spin -= direction * self.velocity.y // 4
+            self.speed = self.velocity.magnitude()
 
-    def bounceOnCeiling(self):
+    def bounceOnWalls(self):
         next_y = self._y + self.velocity.y
         next_x = self._x + self.velocity.x
         floor = self.game.bottom
@@ -899,7 +1039,6 @@ class Ball(GameSprite):
         elif next_y + 2 * self.r >= floor:
             self._y = floor - 2 * self.r
             self._bounce(pygame.math.Vector2(0, 1))
-
         if next_x <= 0:
             self._x = 0
             self._bounce(pygame.math.Vector2(1, 0))
@@ -907,11 +1046,12 @@ class Ball(GameSprite):
             self._x = right - 2 * self.r
             self._bounce(pygame.math.Vector2(-1, 0))
 
+
     def scoreOnPlayers(self):
-        goals = self.game.goals # dict(striker, goal_zone)
+        goals = self.game.goals # dict(striker, goal_rect)
+        hitbox = self._rect
         for striker, zone in goals.items():
-            if (self._x + self.r >= zone[0]
-                and self._x + self.r <= zone[1]):
+            if zone.colliderect(hitbox):
                 self.game._scoreOnPlayer(striker)
 
     def bounceOnStrikers(self):
@@ -924,7 +1064,7 @@ class Ball(GameSprite):
         backstep.normalize_ip()
         limit = 3 * self._substeps
         while pygame.sprite.collide_mask(self, striker):
-            self.move(*(backstep).xy)
+            self.move(backstep.x * 2, backstep.y)
             self.move(0, striker.velocity)
             limit -= 1
             if limit <= 0:
@@ -965,12 +1105,13 @@ class Ball(GameSprite):
         scale = self.game._scale
         hitting = None
         for i in range(self._substeps):
-            future_striker_image = pygame.transform.rotate(striker.image,
-                                            striker.rot_velocity/self._substeps)
-            future_striker_mask = pygame.mask.from_surface(future_striker_image)
+            future_striker_image = pygame.transform.rotate(
+                    striker.image, striker.rot_velocity/self._substeps)
+            future_striker_mask = pygame.mask.from_surface(
+                    future_striker_image)
             mask_offset = pygame.math.Vector2(
-               striker.rect.centerx - future_striker_image.get_width()/2,
-               striker.rect.centery - future_striker_image.get_height()/2)
+                    striker.rect.centerx - future_striker_image.get_width()/2,
+                    striker.rect.centery - future_striker_image.get_height()/2)
             mask_offset -= pygame.math.Vector2(self.rect.x, self.rect.y)
             hitting = self.mask.overlap(future_striker_mask, mask_offset)
             if hitting == None:
@@ -997,6 +1138,9 @@ class Ball(GameSprite):
         # first, move ball back until not clipping Striker
         self._unclipFromStriker(striker)
         final_vector = pygame.math.Vector2(0, 0)
+        offset_vector = pygame.math.Vector2(
+                self._cx - striker._cx,
+                self._cy - striker._cy)
         # then calculate information about the collision
         striker_normal = self._normalizedStrikerImpactAngle(striker)
         # reflect off the striker
@@ -1008,26 +1152,45 @@ class Ball(GameSprite):
         striker_hit_vector = striker_normal.copy()
         striker_hit_vector.scale_to_length(striker.power/self.mass)
         final_vector += striker_hit_vector
-        # modification 2: striker grip
-        grip_vector = pygame.math.Vector2(0,
-                striker.velocity * striker.grip / self.mass)
+        # modification 2: striker relative movement TODO
+        grip_vector = pygame.math.Vector2(
+                0, striker.velocity * striker.grip / self.mass)
         grip_vector *= abs(striker_normal.x)
         self.spin += grip_vector.y
+        print(self.spin)
         self.spin *= striker.elasticity
-        final_vector += grip_vector
         # modification 3: striker rotation
-        final_vector += self._rotateHitOnStriker(striker)
+        self.spin += striker.rot_velocity / 4
+        rotate_hit_vector = self._rotateHitOnStriker(striker)
+        final_vector += rotate_hit_vector
+        # stuck-proofing
+        # if final vector not pointing away from striker...
+        # critical! - use offset_vector to correct (probably hit edge)
+        critical = pygame.math.Vector2(0, 0)
+        towards_striker = (offset_vector.x > 0) != (final_vector.x > 0)
+        if towards_striker:
+            new_offset = offset_vector.copy()
+            new_offset.scale_to_length(striker.power/self.mass)
+            critical = new_offset
+            final_vector = (rotate_hit_vector +
+                            striker_hit_vector +
+                            new_offset)
         # apply final calculated vector
         if final_vector.magnitude() == 0:
-            if striker_normal.magnitude() == 0:
-                self.velocity = offset_vector
-            else:
-                self.velocity = striker_hit_vector
+            self.velocity = striker_hit_vector + reflect_vector
         else:
             self.velocity = final_vector
-        # draw the impact onto the side panel
-        # TODO debug drawing
         self.speed = self.velocity.magnitude()
+        # put the bounce onto the display
+        bounce_data = {"normal": striker_normal,
+                       "offset": offset_vector,
+                       "reflect": reflect_vector,
+                       "grip": grip_vector,
+                       "final": self.velocity,
+                       "rotate": rotate_hit_vector,
+                       "critical": critical,
+                       "speed": self.speed}
+        striker.displayStrikerBounce(self, bounce_data)
 
     def _spin_effect(self):
         if abs(self.spin) < self.rolling_friction:
@@ -1053,8 +1216,8 @@ class Ball(GameSprite):
     def update(self):
         for i in range(self._substeps):
             self.roll()
-            self.bounceOnCeiling()
             self.bounceOnStrikers()
+        self.bounceOnWalls()
         self.scoreOnPlayers()
 
 class PongGame(Game):
@@ -1065,6 +1228,8 @@ class PongGame(Game):
         self.base_background.fill(Color.black)
         self.name = "pong"
         self.fps = 60
+        # increase ball speed by 1 every 5 seconds
+        self.SPEED_INCREASE_TIME = 3
         self._initialize_screens(side_width)
         self._initialize_sprites()
         self._initialize_controls()
@@ -1081,15 +1246,15 @@ class PongGame(Game):
 
     def _initialize_sprites(self):
         # initialize strikers
-        striker_size = (50, 150)
-        striker_speed = 15
-        striker_accel = 8
+        striker_size = (30, 100)
+        striker_speed = 10
+        striker_accel = 10
         striker_rot_speed = 10
         striker_rot_accel = 10
         striker_color = Color.white
-        striker_friction = 10
-        striker_power = 7
-        striker_grip = 10
+        striker_friction = 8
+        striker_power = 12
+        striker_grip = 15
         striker_elasticity = 10
         striker_parameters = (
                 striker_color,
@@ -1116,10 +1281,10 @@ class PongGame(Game):
         self.striker_left._debug_screen = self.debug_screen_left
 
         # initialize ball
-        ball_speed = 8
+        ball_speed = 5
         ball_color = Color.white
-        ball_size = 10
-        ball_mass = 10
+        ball_size = 8
+        ball_mass = 15
         ball_parameters = (ball_speed,
                            ball_color,
                            ball_size,
@@ -1128,13 +1293,23 @@ class PongGame(Game):
         self._add_sprite(self.ball)
 
         # setup striker goals
-        goal_length = 10
+        goal_length = 5
         self.goals = {self.striker_left: None,
                       self.striker_right: None}
-        self.goals[self.striker_left] = \
-            (-self._width, goal_length)
-        self.goals[self.striker_right] = \
-            (self._width - goal_length, 2*self._width)
+        self.goals[self.striker_left] = pygame.Rect(
+                (0, 0),
+                (goal_length, self._height))
+
+        self.goals[self.striker_right] = pygame.Rect(
+                (self._width - goal_length, 0),
+                (goal_length, self._height))
+
+        # if you want to see the goals
+        goal_sprite1 = GameSprite(self)
+        goal_sprite1._rect = self.goals[self.striker_left]
+        goal_sprite2 = GameSprite(self)
+        goal_sprite2._rect = self.goals[self.striker_right]
+        # self._add_sprite(goal_sprite1, goal_sprite2)
 
         # setup score text
         score_text_size = 100
@@ -1159,16 +1334,6 @@ class PongGame(Game):
         self.s1_score_text.setText(self.s1_score)
         self.s2_score_text.setText(self.s2_score)
 
-    def _initialize_controls(self):
-        self.p1_up = False
-        self.p1_dn = False
-        self.p1_lt = False
-        self.p1_rt = False
-        self.p2_up = False
-        self.p2_dn = False
-        self.p2_lt = False
-        self.p2_rt = False
-
     def _reset(self):
         middle = self._height // 2
         top_middle = self._height // 4
@@ -1179,12 +1344,11 @@ class PongGame(Game):
         center_right = self._width - center_left
         self.striker_left.moveCenterTo(left, middle)
         self.striker_right.moveCenterTo(right, middle)
-        for striker in (self.striker_right, self.striker_left):
-            striker.rotateTo(0)
-            striker.rot_velocity = 0
-            striker.velocity = 0
+        self.striker_left._reset()
+        self.striker_right._reset()
         self.ball.moveCenterTo(center, middle)
         self.ball.velocity = pygame.math.Vector2(1, 0)
+        self.ball._reset_speed_increase()
         self.ball.speed = self.ball.min_speed
         self.ball.spin = 0
         self.s1_score_text.moveCenterTo(center_left,
@@ -1199,16 +1363,34 @@ class PongGame(Game):
         self.s2_score = 0
         self._reset()
 
+    def _initialize_controls(self):
+        self.p1_up = False
+        self.p1_dn = False
+        self.p1_lt = False
+        self.p1_rt = False
+        self.p1_lm = False
+        self.p1_rm = False
+        self.p2_up = False
+        self.p2_dn = False
+        self.p2_lt = False
+        self.p2_rt = False
+        self.p2_lm = False
+        self.p2_rm = False
+
     def _handle_key(self, event):
         key = Key(event)
-        if key in (pygame.K_UP,):
+        if key in (pygame.K_UP, pygame.K_i):
             self.p1_up = key.down
-        elif event.key in (pygame.K_DOWN,):
+        elif event.key in (pygame.K_DOWN, pygame.K_k):
             self.p1_dn = key.down
-        elif event.key in (pygame.K_RIGHT,):
+        elif event.key in (pygame.K_RIGHT, pygame.K_l):
             self.p1_rt = key.down
-        elif event.key in (pygame.K_LEFT,):
+        elif event.key in (pygame.K_LEFT, pygame.K_j):
             self.p1_lt = key.down
+        elif event.key in (pygame.K_COMMA, pygame.K_u):
+            self.p1_lt = key.down
+        elif event.key in (pygame.K_PERIOD, pygame.K_o):
+            self.p1_rt = key.down
         elif event.key in (pygame.K_w,):
             self.p2_up = key.down
         elif event.key in (pygame.K_s,):
@@ -1217,11 +1399,16 @@ class PongGame(Game):
             self.p2_lt = key.down
         elif event.key in (pygame.K_d,):
             self.p2_rt = key.down
+        elif event.key in (pygame.K_q, pygame.K_z, pygame.K_c):
+            self.p2_lt = key.down
+        elif event.key in (pygame.K_e, pygame.K_x, pygame.K_v):
+            self.p2_rt = key.down
         elif key in (pygame.K_p,) and key.down:
             self._pause = not self._pause
             self._handle_pause()
         elif key in (pygame.K_r,) and key.down:
             self._restart()
+
 
     def _update(self):
         if self.p1_up:
@@ -1240,6 +1427,7 @@ class PongGame(Game):
             self.striker_left._rotateRight()
         if self.p2_lt:
             self.striker_left._rotateLeft()
+        self.ball._increase_speed(1/self.fps/self.SPEED_INCREASE_TIME)
 
     def _scoreOnPlayer(self, player):
         if player == self.striker_left:
