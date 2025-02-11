@@ -9,7 +9,6 @@ import colorsys
 # * https://stackoverflow.com/questions/11603222/allowing-resizing-window-pygame
 
 # TODO list
-# * smaller ball, bigger screen
 # * debug windows (1: game, 2: controller, 3: more controller)
 # * mugic controller module (calibration + implementation)
 # * springy striker (striker x velocity)
@@ -405,7 +404,14 @@ class Screen:
 
     @screen.setter
     def screen(self, new_screen):
+        self.setScreen(new_screen)
+
+    def setScreen(self, new_screen):
         self._screen = new_screen
+        new_size = ((self._screen.get_width() / self._scale),
+                    (self._screen.get_height() / self._scale))
+        self.base_background = pygame.transform.smoothscale(
+                self.base_background, new_size)
         self._redraw()
 
     @property
@@ -600,7 +606,7 @@ class DisplayScreen(Screen):
 
     @screen.setter
     def screen(self, new_screen):
-        self._screen = new_screen
+        self.setScreen(new_screen)
         self._update_tab_subsurfaces()
         self._redraw()
 

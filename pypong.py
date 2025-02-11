@@ -23,7 +23,7 @@ class Striker(GameSprite):
         self.friction = 0.8 * (10.0/(10 + friction/10))
         self.elasticity = 1.0 - 0.6 / (elasticity/10.0 + 0.6)
         self.power = 8 * (power / 10.0)
-        self.grip = 0.5 - 0.5/(2*grip/10.0 + 0.5)
+        self.grip = 0.8 - 0.8/(grip/10.0 + 0.8)
         striker = pygame.Surface(wh, flags=pygame.SRCALPHA)
         striker.fill(self.color)
         self.setImage(striker)
@@ -344,11 +344,11 @@ class Ball(GameSprite):
         striker_hit_vector.scale_to_length(striker.power/self.mass)
         final_vector += striker_hit_vector
         # modification 2: striker relative movement (spin)
-        spin_mod = striker.velocity * striker.grip / self.mass
+        spin_mod = striker.velocity * striker.grip / self.mass * direction
         self.spin += (abs(striker_normal.x)) * spin_mod
         self.spin *= striker.elasticity
         # modification 3: striker rotation
-        self.spin += striker.rot_velocity / 8 * -direction
+        self.spin += striker.rot_velocity / 4
         rotate_hit_vector = self._rotateHitOnStriker(striker)
         final_vector += rotate_hit_vector
         # stuck-proofing
@@ -358,7 +358,7 @@ class Ball(GameSprite):
         towards_striker = (offset_vector.x > 0) != (final_vector.x > 0)
         if towards_striker:
             new_offset = offset_vector.copy()
-            new_offset.scale_to_length(striker.power * 1.5/self.mass)
+            new_offset.scale_to_length(striker.power * 1.2/self.mass)
             critical = new_offset
             final_vector = (rotate_hit_vector +
                             striker_hit_vector +
@@ -440,7 +440,7 @@ class PongGame(Game):
         striker_color = Color.white
         striker_friction = 8
         striker_power = 12
-        striker_grip = 15
+        striker_grip = 10
         striker_elasticity = 10
         striker_parameters = (
                 striker_color,
