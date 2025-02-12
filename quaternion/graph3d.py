@@ -105,10 +105,12 @@ class Shape:
         return r
 
 class Axes(Shape):
-    def __init__(self, color):
-        l = (Line(Point(-1.0, 0, 0), Point(1.0, 0, 0), color),
-             Line(Point(0, -1.0, 0), Point(0, 1.0, 0), color),
-             Line(Point(0, 0, -1.0), Point(0, 0, 1.0), color))
+    def __init__(self, xcolor, ycolor=None, zcolor=None):
+        if ycolor == None: ycolor = xcolor
+        if zcolor == None: zcolor = xclolor
+        l = (Line(Point(-1.0, 0, 0), Point(1.0, 0, 0), xcolor),
+             Line(Point(0, -1.0, 0), Point(0, 1.0, 0), ycolor),
+             Line(Point(0, 0, -1.0), Point(0, 0, 1.0), zcolor))
         super().__init__(l)
 
 class Square(Shape):  # Unit square in XY plane
@@ -208,7 +210,8 @@ class Sphere(Shape):  # Unit sphere in XY plane centred on origin
 class Camera:
     def __init__(self, rot=0, distance = 2):
         self.distance = distance
-        self.crot = Rotator(rot, 1, 1, 0)
+        self.crotx = Rotator(rot, 1, 0, 0)
+        self.croty = Rotator(rot, 0, 1, 0)
         self.d = {}
 
     def __setitem__(self, key, value):
@@ -223,14 +226,17 @@ class Camera:
         del self.d[key]
 
     def show(self, surface):
-        crot = self.crot
+        crot = self.croty * self.crotx
         dz = self.distance
         for shape in self.d.values():
             s = shape.camera(crot, dz)
             s.show(surface)
 
-    def rotate(self, angle):
-        self.crot = Rotator(angle, 1, 1, 0)
+    def rotateX(self, angle):
+        self.crotx = Rotator(angle, 1, 0, 0)
+
+    def rotateY(self, angle):
+        self.croty = Rotator(angle, 0, 1, 0)
 
     def zoom(self, distance):
         self.distance += distance
