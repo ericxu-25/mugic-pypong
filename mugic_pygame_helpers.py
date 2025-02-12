@@ -67,9 +67,11 @@ class Key():
 class Sprite(pygame.sprite.DirtySprite):
     # class variables
     sprite_id = 0
-    def __init__(self, screen):
+    def __init__(self, screen=None):
         super().__init__()
         # screen the sprite will be adjusted to
+        if screen is None:
+            screen = Screen()
         self.screen = screen
         # sprite properties
         self.dirty = 1
@@ -79,8 +81,8 @@ class Sprite(pygame.sprite.DirtySprite):
         self.layer = 0
         self._width = random.randint(50, 200)
         self._height = random.randint(50, 200)
-        self._x = random.randint(50, 200)
-        self._y = random.randint(50, 200)
+        self._x = random.randint(50, 100)
+        self._y = random.randint(50, 100)
         # sprite image
         self._scale = 1
         self.rotation = 0
@@ -302,6 +304,8 @@ class TextSprite(Sprite):
         self.font = pygame.font.Font(font, self.fontsize)
         self.fonttype = font
         self._redraw()
+        if hasattr(self, "text"):
+            self._renderText()
         return self
 
     def _renderText(self):
@@ -373,11 +377,10 @@ class Screen:
     def __init__(self, w = None, h = None, padding = None):
         self.name = "screen"
         self.sprites = pygame.sprite.LayeredDirty()
+        if w == None: w = 400
+        if h == None: h = 300
         self._pause = False
-        self._window = Window()
         self._position = (0, 0)
-        if w == None: w = self._window._width
-        if h == None: h = self._window._height
         if padding == None: padding = (0, 0, 0, 0)
         self._init_screen(padding, w, h)
 
@@ -406,6 +409,7 @@ class Screen:
     def screen(self, new_screen):
         self.setScreen(new_screen)
 
+    # setScreen - does not update the screen ratio
     def setScreen(self, new_screen):
         self._screen = new_screen
         new_size = ((self._screen.get_width() / self._scale),
@@ -413,6 +417,7 @@ class Screen:
         self.base_background = pygame.transform.smoothscale(
                 self.base_background, new_size)
         self._redraw()
+        return self
 
     @property
     def base_width(self):
@@ -495,6 +500,12 @@ class Screen:
     def _remove_sprite(self, *sprites):
         self.sprites.remove(*sprites)
 
+    def addSprite(self, *sprites):
+        self._add_sprite(*sprites)
+
+    def removeSprite(self, *sprites):
+        self._remove_sprite(*sprites)
+
     def _resize(self, scale):
         self._scale = scale
         self.background = pygame.transform.scale(
@@ -510,11 +521,6 @@ class Screen:
         if event.type in (pygame.KEYDOWN, pygame.KEYUP):
             self._handle_key(event)
 
-    def _render(self):
-        self._draw_sprites()
-        if self._screen.get_parent() is None:
-            self._window.window.blit(self._screen, self.position)
-
     def refresh(self):
         self._redraw()
 
@@ -529,8 +535,22 @@ class Screen:
     def _handle_key(self, event):
         return
 
+# Screen which works with the main Window
+class WindowScreen(Screen):
+    def __init__(self, w = None, h = None, padding = None):
+        if w == None: w = self._window._width
+        if h == None: h = self._window._height
+        super().__init__(w, h, padding)
+        self.name = "window screen"
+        self._window = Window()
+
+    def _render(self):
+        self._draw_sprites()
+        if self._screen.get_parent() is None:
+            self._window.window.blit(self._screen, self.position)
+
 # Screen with interface to display many things in tabs
-class DisplayScreen(Screen):
+class DisplayScreen(WindowScreen):
     def __init__(self, w = None, h = None, padding = None):
         self.tabs = list()
         super().__init__(w, h, padding)
@@ -634,7 +654,7 @@ class DisplayScreen(Screen):
         return text
 
 # Screen which includes basic game logic
-class Game(Screen):
+class Game(WindowScreen):
     def __init__(self, w = None, h = None, padding = None):
         super().__init__(w, h, padding)
         self.name = "game"
