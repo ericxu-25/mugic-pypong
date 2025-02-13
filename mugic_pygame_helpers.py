@@ -265,10 +265,15 @@ class Sprite(pygame.sprite.DirtySprite):
 
 
 class GameSprite(Sprite):
-    def __init__(self, game):
-        self.game = game
+    def __init__(self, game=None):
         super().__init__(game)
         self.name = f"GameSprite {self.sprite_id}"
+
+    @property
+    def game(self): return self.screen
+
+    @game.setter
+    def game(self, game): self.screen = game
 
     # put Sprite logic in here
     def _reset(self):
@@ -279,7 +284,7 @@ class GameSprite(Sprite):
 
 # sprite used to display formatted text
 class TextSprite(Sprite):
-    def __init__(self, screen):
+    def __init__(self, screen=None):
         super().__init__(screen)
         self.name = f"TextSprite {TextSprite.sprite_id}"
         self.layer = 2
@@ -495,6 +500,7 @@ class Screen:
         self._draw_sprites()
 
     def _add_sprite(self, *sprites):
+        for sprite in sprites: sprite.screen = self
         self.sprites.add(*sprites)
 
     def _remove_sprite(self, *sprites):

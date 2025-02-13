@@ -1,50 +1,132 @@
 # mugic_helper.py - module used for interfacing with mugic IMU
 # portions of code borrowed from the pymugic module
 # * https://github.com/amiguet/pymugic
-# quaternion module is taken from peter hinch
+# quaternion & 3d drawing module taken (and modified) from peter hinch
 # * https://github.com/peterhinch/micropython-samples/blob/master/QUATERNIONS.md
 # oscpy reference:
 # * https://github.com/kivy/oscpy
 
 # TODO
-# * create mockable mugic device
+# * implement reading from usb device
 
 import oscpy as osc
 from oscpy.server import OSCThreadServer
 from oscpy.client import OSCClient
 from mugic_pygame_helpers import Screen, TextSprite, Color
 import time
-import pygame
 import math
 from math import pi
-from collections import deque as stack
-from threading import Timer, Thread
+from collections import deque
 import quaternion.quat as quat
 import quaternion.graph3d as graph3d
 
+import sys
+import pygame
+from threading import Timer
+
 # Base Classes
 
-# wrapper class for a 9 axis IMU for pygame
-# 9 axis - 3 for gyroscope, 3 for acceleration, 3 for compass
-class PygameIMU:
+# interface for an IMU controller
+# TODO add methods to map datagrams to understandable motions
+# methods to add:
+# * accel, orientation, quat_orientation, gyro
+# * movingLeft, movingRight, movingUp, movingDown
+# * flippingLeft, flippingRight, flippingForward, flippingBack
+# * facingForward, facingBackward, facingLeft, facingRight
+# * facingUp, facingDown
+# * compassAngle
+class IMU:
+    # Generic 9-axis Datagram structure
+    # Datagram types and structure
+    types = [float] * 16
+    datagram = (
+        'AX', 'AY', 'AZ', # Accelerometer
+        'EX', 'EY', 'EZ', # Euler angles
+        'GX', 'GY', 'GZ', # Gyrometer
+        'MX', 'MY', 'MZ', # Magnetometer
+        'QW', 'QX', 'QY', 'QZ', # Quaternion angles
+    )
+
     def __init__(self):
-        print("PygameIMU under development")
+        self._data = deque()
+        self.dirty = False
+        self.zero()
 
-    def calibrate(self):
-        return self
+    @property
+    def dirty(self):
+        if len(self._data) > 0:
+            self._dirty = True
+        return self._dirty
 
-#  mugic_init         - prepares osc server for connections
-#  get_connect_status - gets connection status of the mugic device
-#  get_datagram       - get the most recent datagram from the mugic device
+    @dirty.setter
+    def dirty(self, val):
+        self._dirty = bool(val)
+
+    def peekDatagram(self, raw=False):
+        if len(self._data) == 0: return None
+        datagram = self._data[-1].copy()
+        if raw: return datagram
+        return self._calibrate(datagram)
+
+    def popDatagram(self, raw=False):
+        if len(self._data) == 0: return None
+        datagram = self._data.pop()
+        if raw: return datagram
+        return self._calibrate(datagram)
+
+    def popDatagrams(self, raw=False):
+        datagrams = self._data.copy()
+        self._data.clear()
+        if raw: return datagrams
+        return [self._calibrate(d) for d in datagrams]
+
+    def refresh(self):
+        if len(self._data) <= 1: return
+        self._dirty = True
+        last_datagram = self._data[0]
+        self._data.clear()
+        self._data.appendleft(last_datagram)
+
+    def zero(self, *args):
+        args = list(args)
+        while len(args) < len(IMU.datagram):
+            args.append(0)
+        for i in range(len(IMU.types)):
+            args[i] = IMU.types[i](args[i])
+        self._zero = dict(zip(IMU.datagram, args))
+
+    def calibrate(self, *args):
+        self.zero(*args)
+        self._zero['MX'] = 0
+        self._zero['MY'] = 0
+        self._zero['MZ'] = 0
+
+    def _calibrate(self, datagram):
+        calibrated_quat = IMU.quaternion(datagram) * IMU.quaternion(self._zero).conjugate()
+        for key, value in self._zero.items():
+            datagram[key] -= value
+        datagram['QW'] = calibrated_quat.w
+        datagram['QX'] = calibrated_quat.x
+        datagram['QY'] = calibrated_quat.y
+        datagram['QZ'] = calibrated_quat.z
+        return datagram
+
+    @staticmethod
+    def quaternion(datagram):
+        if datagram['QW'] == 0: return quat.Quaternion(1, 0, 0, 0)
+        return quat.Quaternion(datagram['QW'], datagram['QX'],
+                               datagram['QY'], datagram['QZ'])
+
+#  connected          - gets connection status of the mugic device
+#  get_datagram       - get the next datagram from the mugic device
+#  get_datagrams      - get the all the datagrams from the mugic device
 #  calibrate          - set calibration data
-#  get_datagrams      - get the most recent datagrams from the mugic device
 #  get_image          - gets the 3d visualization of the mugic device
-
-class MugicDevice(PygameIMU):
+class MugicDevice(IMU):
     # Datagram signature
     types= [float if t == 'f' else int for t in 'fffffffffffffffffiiiiifi']
     # Datagram structure
-    mu_datagram = (
+    datagram = (
         'AX', 'AY', 'AZ', # accelerometer
         'EX', 'EY', 'EZ', # Euler angles
         'GX', 'GY', 'GZ', # Gyrometer
@@ -56,21 +138,18 @@ class MugicDevice(PygameIMU):
         'seqnum', # messagesequence number
     )
 
-    def __init__(self, port=4000):
+    def __init__(self, port=4000, max_buffer=10000):
+        super().__init__()
         self.port = port
-        self._data = stack()
-        self.dirty = False
-        self._init_image(100, 100)
+        self.max_buffer = max_buffer
         self._mugic_init()
+        self._connected = False
         return
 
     @staticmethod
     def _parse_datagram(*values):
         values = [t(v) for t, v in zip(MugicDevice.types, values)]
-        datagram = {
-            k: v
-            for k, v in zip(MugicDevice.mu_datagram, values)
-        }
+        datagram = dict(zip(MugicDevice.datagram, values))
         return datagram
 
     @staticmethod
@@ -80,11 +159,14 @@ class MugicDevice(PygameIMU):
 
     def _callback(self, *values):
         datagram = MugicDevice._parse_datagram(*values)
-        self._data.append(datagram)
-        self.dirty = True
+        self._data.appendleft(datagram)
+        if self.max_buffer and len(self._data) > self.max_buffer:
+            self._data.pop()
+        self._dirty = True
+        self._connected = True
 
     def _mugic_init(self):
-        # prepare for connections
+        # prepare for connection
         if self.port is None: return
         self._osc_server = OSCThreadServer()
         address = '0.0.0.0'
@@ -93,23 +175,92 @@ class MugicDevice(PygameIMU):
         self._osc_server.bind(b'/mugicdata', self._callback)
         return
 
+    def calibrate(self, *args):
+        if len(self._data) != 0 and len(args) == 0:
+            super().calibrate(*self.peekDatagram(raw=True).values())
+        else:
+            super().calibrate(*args)
+        self._dirty = True
+
     def connected(self):
-        return len(self._data) != 0
+        return self._connected or len(self._data) != 0
 
-    def getDatagram(self):
-        if len(self._data) == 0:
-            return None
-        datagram = self._data.pop()
-        return datagram
+# mock mugic device - used to simulate a mugic device
+class MockMugicDevice(MugicDevice):
+    def __init__(self, port=None, datafile=None, max_buffer=None):
+        super().__init__(port, max_buffer)
+        self._datafile = datafile
+        address = '127.0.0.1'
+        self._osc_client = OSCClient(address, port)
+        self._start_time = 0
+        self._base_time = 0
+        if datafile is not None:
+            self.sendData(datafile)
+        if datafile is None and port is None:
+            print("Warning: blank MockMugicDevice!")
 
-    def getDatagrams(self):
-        datagrams = self._data.copy()
-        self._data.clear()
+    @property
+    def dirty(self):
+        if self._next_datagram_is_available():
+            self._dirty = True
+        return self._dirty
+
+    @dirty.setter
+    def dirty(self, val:bool):
+        self._dirty = val
+
+    def _datagram_is_ready(self, datagram):
+        if len(self._data) == 0: return False
+        elapsed = time.time() - self._start_time
+        datagram_time = datagram['seconds']
+        next_datagram_time = datagram_time - self._base_time
+        if elapsed < next_datagram_time: return False
+        return True
+
+    def _next_datagram_is_available(self):
+        if len(self._data) == 0: return False
+        top = self._data[-1]
+        if not self._datagram_is_ready(top): return False
+        return True
+
+    def popDatagram(self, raw=False):
+        if not self._next_datagram_is_available(): return None
+        return super().popDatagram(raw)
+
+    def peekDatagram(self, raw=False):
+        if not self._next_datagram_is_available(): return None
+        return super().peekDatagram(raw)
+
+    def popDatagrams(self, raw=False):
+        datagrams = deque()
+        index = 0
+        for datagram in reversed(self._data):
+            if not self._datagram_is_ready(datagram): break
+            if not raw: self._calibrate(datagram)
+            datagrams.appendleft(datagram)
+        for _ in datagrams:
+            self._data.pop()
         return datagrams
 
-    def calibrate(self, calib_data):
-        # TODO
-        return
+    def sendData(self, datafile):
+        print("MockMugicDevice: sending data in file", datafile)
+        self._base_time = 0
+        for data in open(datafile, 'r'):
+            values = [t(v) for t, v in zip(MugicDevice.types,
+                                           data.split(','))]
+            if self._base_time == 0:
+                self._base_time = values[22]
+            if self.port is None:
+                self._callback(*values)
+            else:
+                self._osc_client.send_message(b'/mugicdata', values)
+        print("MockMugicDevice: completed sending", datafile)
+        self._start_time = time.time()
+
+class IMUDisplay:
+    def __init__(self, imu):
+        self._imu = imu
+        self._init_image(100, 100)
 
     def _init_image(self, w, h):
         self._image_size = (w, h)
@@ -142,7 +293,7 @@ class MugicDevice(PygameIMU):
             self._camera.rotateX(self._image_rotationx)
         except AttributeError:
             self._init_image_cube()
-        self.dirty = True
+        self._imu.dirty = True
 
     def rotateImageY(self, angle=1):
         try:
@@ -151,38 +302,40 @@ class MugicDevice(PygameIMU):
             self._camera.rotateY(self._image_rotationy)
         except AttributeError:
             self._init_image_cube()
-        self.dirty = True
+        self._imu.dirty = True
 
     def zoomImage(self, distance):
         try:
             self._camera.zoom(distance)
         except AttributeError:
             self._init_image_cube()
-        self.dirty = True
+        self._imu.dirty = True
 
     def resetImage(self):
         del self._image_cube
         self._init_image_cube()
-        self.dirty = True
+        self._imu.dirty = True
 
     def _init_image_cube(self):
-        self._image_rotationx = 0
-        self._image_rotationy = 0
         if hasattr(self, '_image_cube'): return
         self._image_cube = graph3d.Cube(Color.magenta, Color.cyan, Color.orange)
         self._image_cube += (-0.5, -0.5, -0.5)
-        self._image_cube *= (0.4, 0.3, 1)
+        self._image_cube *= (0.8, 0.5, 0.2)
         self._camera = graph3d.Camera()
+        self._image_rotationx = -pi/2
+        self._image_rotationy = pi/2
+        self._camera.rotateY(self._image_rotationy)
+        self._camera.rotateX(self._image_rotationx)
         self._camera["cube"] = self._image_cube
         self._camera["axes"] = graph3d.Axes(Color.red, Color.green, Color.blue)
 
     def getImage(self, w=None, h=None):
         w, h = self._set_image_size(w, h)
-        if not self.dirty: return self._image
+        if not self._imu.dirty: return self._image
         try:
             self.image.fill(Color.black)
             # apply datagram transformations
-            datagram = self.getDatagram()
+            datagram = self._imu.peekDatagram()
             if datagram is not None:
                 data_quat = quat.Quaternion(
                         datagram['QW'],
@@ -192,83 +345,14 @@ class MugicDevice(PygameIMU):
                 #print(quat.euler(data_quat))
                 self._camera["cube"] = self._image_cube @ data_quat
             self._camera.show(self.image)
-        except AttributeError:
+        except AttributeError as e:
+            if hasattr(self, "_image_cube"): raise AttributeError(e)
             self._init_image_cube()
             return self.getImage(w, h)
         return self.image
 
-# mock mugic device - used to simulate a mugic device
-class MockMugicDevice(MugicDevice):
-    def __init__(self, port=None, datafile=None):
-        super().__init__(port)
-        self._datafile = datafile
-        address = '127.0.0.1'
-        self._osc_client = OSCClient(address, port)
-        self._start_time = 0
-        self._base_time = 0
-        if datafile is not None:
-            self.sendData(datafile)
-        if datafile is None and port is None:
-            print("Warning: blank MockMugicDevice!")
-
-    @property
-    def dirty(self):
-        if self._next_datagram_is_available():
-            self._dirty = True
-        return self._dirty
-
-    @dirty.setter
-    def dirty(self, val:bool):
-        self._dirty = val
-
-    def _datagram_is_ready(self, datagram):
-        if len(self._data) == 0: return False
-        elapsed = pygame.time.get_ticks() - self._start_time
-        datagram_time = datagram['seconds']
-        next_datagram_time = datagram_time - self._base_time
-        if elapsed < next_datagram_time*10: return False
-        return True
-
-    def _next_datagram_is_available(self):
-        if len(self._data) == 0: return False
-        top = self._data[-1]
-        if not self._datagram_is_ready(top): return False
-        return True
-
-    def getDatagram(self):
-        if not self._next_datagram_is_available(): return None
-        datagram = self._data.pop()
-        self.dirty = True
-        return datagram
-
-    def getDatagrams(self):
-        datagrams = deque()
-        index = 0
-        for datagram in self._data:
-            if not _datagram_is_ready(datagram): break
-            datagrams.appendLeft(datagram)
-            index += 1
-        self._data = self._data[index:]
-        return datagrams
-
-    def sendData(self, datafile):
-        print("MockMugicDevice: sending data in file", datafile)
-        first_datagram_time = 0
-        for data in open(datafile, 'r'):
-            values = [t(v) for t, v in zip(MugicDevice.types,
-                                           data.split(','))]
-            if first_datagram_time == 0:
-                first_datagram_time = values[22]
-            if self.port is None:
-                self._callback(*values)
-            else:
-                self._osc_client.send_message(b'/mugicdata', values)
-        print("MockMugicDevice: completed sending", datafile)
-        self._start_time = pygame.time.get_ticks()
-        self._base_time = first_datagram_time
-
-
-def recordMugicDevice(mugic, datafile, seconds=60):
+# TESTING FUNCTIONS BELOW
+def _recordMugicDevice(mugic, datafile, seconds=60):
     print("waiting for mugic to be connected...")
     total_wait_time = 0
     wait_period = 0.5
@@ -288,7 +372,7 @@ def recordMugicDevice(mugic, datafile, seconds=60):
 
 def _write_recorded_data(mugic, file):
     print("preparing to write", len(mugic._data), "datagrams...")
-    for datagram in mugic.getDatagrams():
+    for datagram in reversed(mugic.popDatagrams(raw=True)):
         datagram = MugicDevice._datagram_to_string(datagram)
         # print("writing datagram:", datagram)
         file.write(datagram+'\n')
@@ -305,16 +389,20 @@ def _viewMugicDevice(mugic_device):
     display = pygame.display.get_surface()
     frames = 0
     ticks = pygame.time.get_ticks()
+    # mugic display setup
+    mugic_display = IMUDisplay(mugic_device)
+    mugic_display.setImageSize(*window_size)
     # object setup
-    mugic_device.setImageSize(*window_size)
     display_screen = Screen(*window_size).setScreen(display)
-    text_display = TextSprite(display_screen)
+    text_display = TextSprite()
     display_screen.addSprite(text_display)
     text_display.setFormatString("fps: {}")
     text_display.setText("NOT CONNECTED").setFontSize(30)
     text_display.moveTo(50, 50)
     display_screen._redraw()
     pygame.display.flip()
+    # variables
+    last_datagram = list()
     # main loop
     while True:
         event = pygame.event.poll()
@@ -326,42 +414,59 @@ def _viewMugicDevice(mugic_device):
 
         rot_amount = pi/180
         if state[pygame.K_a]:
-            mugic_device.rotateImageY(-rot_amount)
+            mugic_display.rotateImageY(-rot_amount)
         elif state[pygame.K_d]:
-            mugic_device.rotateImageY(rot_amount)
+            mugic_display.rotateImageY(rot_amount)
         if state[pygame.K_w]:
-            mugic_device.rotateImageX(-rot_amount)
+            mugic_display.rotateImageX(-rot_amount)
         elif state[pygame.K_s]:
-            mugic_device.rotateImageX(rot_amount)
+            mugic_display.rotateImageX(rot_amount)
         elif state[pygame.K_z]:
-            mugic_device.zoomImage(0.1)
+            mugic_display.zoomImage(0.1)
         elif state[pygame.K_x]:
-            mugic_device.zoomImage(-0.1)
+            mugic_display.zoomImage(-0.1)
         elif state[pygame.K_r]:
-            mugic_device.resetImage()
+            mugic_display.resetImage()
+        elif state[pygame.K_c]:
+            mugic_device.calibrate(*last_datagram)
+
+        datagram = mugic_device.peekDatagram(raw=True)
+        if datagram is not None:
+            last_datagram = datagram.values()
+            frames += 1
+            mugic_device.dirty = True
 
         if mugic_device.dirty:
-            mugic_image = mugic_device.getImage()
+            mugic_image = mugic_display.getImage()
+            mugic_device.popDatagram()
             display_screen._redraw()
             display.blit(mugic_image, (0, 0))
-            pygame.display.flip()
             mugic_device.dirty = False
-            if not mugic_device.connected():
-                continue
-            frames += 1
-            fps_value = ((frames*1000)/(pygame.time.get_ticks()-ticks))
-            text_display.setText(round(fps_value, 3))
         else:
             time.sleep(.01)
+        fps_value = ((frames*1000)/(pygame.time.get_ticks()-ticks))
+        text_display.setText(round(fps_value, 3))
+        pygame.display.flip()
     pygame.quit()
 
-def _recordMugic(mugic, seconds=60, filename="recording.txt"):
-    recordMugicDevice(mugic, filename, seconds)
 
 # MAIN FUNCTION - for use with testing / recording
+# python mugic_helper.py [p|r] [datafile] [seconds]
 if __name__ == "__main__":
-    mugic = MockMugicDevice(datafile="recording.txt")
-    _viewMugicDevice(mugic)
-    #mugic = MugicDevice(port=4000)
-    #_recordMugic(mugic, seconds=10)
+    _, *args = sys.argv
+    datafile = args[1] if len(args) >= 2 else "recording.txt"
+    seconds = int(args[2]) if len(args) >= 3 else 10
+    if len(args) == 0:
+        mugic = MugicDevice(port=4000)
+        _viewMugicDevice(mugic)
+    elif 'r' in args[0]:
+        mugic = MugicDevice(port=4000)
+        _recordMugicDevice(mugic, datafile, seconds)
+    elif 'p' in args[0]:
+        mugic = MockMugicDevice(datafile=datafile)
+        _viewMugicDevice(mugic)
+    else:
+        mugic = MugicDevice(port=4000)
+        _viewMugicDevice(mugic)
+
 

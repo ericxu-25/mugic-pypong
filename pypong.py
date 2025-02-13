@@ -9,7 +9,7 @@ from mugic_pygame_helpers import *
 
 # PONG implementation
 class Striker(GameSprite):
-    def __init__(self, game):
+    def __init__(self, game=None):
         super().__init__(game)
         self.velocity = 0
         self.rot_velocity = 0
@@ -171,7 +171,7 @@ class Striker(GameSprite):
             self.velocity = 0
 
 class Ball(GameSprite):
-    def __init__(self, game):
+    def __init__(self, game=None):
         super().__init__(game)
         self.spin = 0
         self.velocity = pygame.math.Vector2(1, 0)
@@ -453,8 +453,8 @@ class PongGame(Game):
                 striker_power,
                 striker_grip,
                 striker_elasticity)
-        self.striker_left = Striker(self)
-        self.striker_right = Striker(self)
+        self.striker_left = Striker()
+        self.striker_right = Striker()
         self.striker_left.setup(*striker_parameters)
         self.striker_right.setup(*striker_parameters)
         self._add_sprite(self.striker_left)
@@ -475,7 +475,7 @@ class PongGame(Game):
                            ball_color,
                            ball_size,
                            ball_mass)
-        self.ball = Ball(self).setup(*ball_parameters)
+        self.ball = Ball().setup(*ball_parameters)
         self._add_sprite(self.ball)
 
         # setup striker goals
@@ -491,16 +491,16 @@ class PongGame(Game):
                 (goal_length, self._height))
 
         # if you want to see the goals
-        goal_sprite1 = GameSprite(self)
+        goal_sprite1 = GameSprite()
         goal_sprite1._rect = self.goals[self.striker_left]
-        goal_sprite2 = GameSprite(self)
+        goal_sprite2 = GameSprite()
         goal_sprite2._rect = self.goals[self.striker_right]
         # self._add_sprite(goal_sprite1, goal_sprite2)
 
         # setup score text
         score_text_size = 100
-        self.s1_score_text = TextSprite(self).setFormatString("{}")
-        self.s2_score_text = TextSprite(self).setFormatString("{}")
+        self.s1_score_text = TextSprite().setFormatString("{}")
+        self.s2_score_text = TextSprite().setFormatString("{}")
         self.s1_score_text.setFontSize(score_text_size)
         self.s2_score_text.setFontSize(score_text_size)
         self._add_sprite(self.s1_score_text)
