@@ -8,6 +8,8 @@
 
 # TODO
 # * implement reading from usb device
+# * add variable display text sprites
+# * add IMU functions
 
 import oscpy as osc
 from oscpy.server import OSCThreadServer
@@ -81,11 +83,12 @@ class IMU:
         return [self._calibrate(d) for d in datagrams]
 
     def refresh(self):
-        if len(self._data) <= 1: return
+        if len(self._data) == 0: return None
         self._dirty = True
         last_datagram = self._data[0]
         self._data.clear()
         self._data.appendleft(last_datagram)
+        return last_datagram
 
     def zero(self, *args):
         args = list(args)
