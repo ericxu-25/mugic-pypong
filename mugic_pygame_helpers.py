@@ -88,6 +88,7 @@ class Sprite(pygame.sprite.DirtySprite):
         self.rotation = 0
         self.base_image = pygame.Surface((self._width, self._height))
         self.base_image.fill(Color.green)
+        self._colorkey = None
         self.setImage(self.base_image)
         self.rect = self.image.get_rect()
         self.moveCenterTo(self._x, self._y)
@@ -192,6 +193,15 @@ class Sprite(pygame.sprite.DirtySprite):
         self._update_position()
 
     @property
+    def colorkey(self):
+        return self._colorkey
+
+    @colorkey.setter
+    def colorkey(self, color):
+        self._colorkey = color
+        self.setImage(self.base_image)
+
+    @property
     def scale(self):
         return self.screen._scale
 
@@ -218,6 +228,7 @@ class Sprite(pygame.sprite.DirtySprite):
 
     def setImage(self, image):
         self.base_image = image
+        image.set_colorkey(self._colorkey)
         self.rect = image.get_rect()
         self.resize(self.rect.w, self.rect.h)
         return self
@@ -288,43 +299,154 @@ class TextSprite(Sprite):
         super().__init__(screen)
         self.name = f"TextSprite {TextSprite.sprite_id}"
         self.layer = 2
-        self.format_str = "text_sprite: {}"
-        self.fontsize = 10
-        self.fonttype = FREESANS
-        self.color = Color.white
-        self.setFontType(self.fonttype)
-        self.antialias = True
+        self._format_str = "text_sprite: {}"
+        self._fontsize = 10
+        self._spacing = 4
+        self._fonttype = FREESANS
+        self._color = Color.white
+        self._backcolor = None
+        self.setFontType(self._fonttype)
+        self._antialias = True
         self.setText("sample text")
 
-    def setAntiAlias(self, antialias: bool):
-        self.antialias = antialias
+    def _line_renders(self):
+        spacing = self._fontsize + self._spacing
+        for i, line in enumerate(self.text.split('\n')):
+            line_render = self.font.render(
+                    line,
+                    self._antialias,
+                    self._color,
+                    self._colorkey)
+            line_rect = line_render.get_rect()
+            line_rect.topleft = (0, spacing * i)
+            yield line_render, line_rect
+
+    def _renderText(self):
+        text_render_rect = pygame.Rect(0,0,0,0)
+        lines = list()
+        for line_render, line_rect in self._line_renders():
+            text_render_rect.union_ip(line_rect)
+            lines.append((line_render, line_rect))
+        text_render = pygame.Surface(text_render_rect.size)
+        if self._antialias or self._colorkey is None:
+            text_render = text_render.convert_alpha()
+            text_render.fill((0, 0, 0, 0))
+        if self._backcolor is not None:
+            text_render.fill(self._backcolor)
+        for line_render, line_rect in lines:
+            text_render.blit(line_render, line_rect)
+        self.setImage(text_render)
+        self._update_position()
+        self._redraw()
+
+    def setAntialias(self, antialias: bool):
+        self._antialias = antialias
+        self._renderText()
         return self
 
     def setFontSize(self, size):
-        self.fontsize = size
-        self.setFontType(self.fonttype)
+        self._fontsize = size
+        self.setFontType(self._fonttype)
         return self
 
     def setFontType(self, font):
-        self.font = pygame.font.Font(font, self.fontsize)
-        self.fonttype = font
+        self.font = pygame.font.Font(font, self._fontsize)
+        self._fonttype = font
         self._redraw()
         if hasattr(self, "text"):
             self._renderText()
         return self
 
-    def _renderText(self):
+    def setFormatString(self, format_str):
+        self._format_str = format_str
+        self._renderText()
+        return self
+
+    def setColor(self, color):
+        self._color = color
+        self._renderText()
+        return self
+
+    def setBackColor(self, color):
+        self._backcolor = color
+        self._renderText()
+        return self
+
+    def setText(self, *args, **kwargs):
+        self._text = [args, kwargs]
+        self._renderText()
+        return self
+
+    @property
+    def antialias(self, size):
+        return self._antialias
+
+    @antialias.setter
+    def antialias(self, on):
+        self.setAntialias(bool(on))
+
+    @property
+    def fontsize(self, size):
+        return self._fontsize
+
+    @fontsize.setter
+    def fontsize(self, size):
+        self.setFontSize(size)
+
+    @property
+    def fonttype(self, font):
+        return self._fonttype
+
+    @fonttype.setter
+    def fonttype(self, font):
+        self.setFontType(font)
+
+    @property
+    def format(self):
+        return self._format_str
+
+    @format.setter
+    def format(self, format_str):
+        self.setFormatString(format_str)
+
+    @property
+    def color(self):
+        return self._color
+
+    @color.setter
+    def color(self, color):
+        self.setColor(color)
+
+    @property
+    def backcolor(self):
+        return self._color
+
+    @backcolor.setter
+    def backcolor(self, backcolor):
+        self.setBackColor(backcolor)
+
+
+    @property
+    def text(self):
         try:
-            text = self.format_str.format(*self.text[0], **self.text[1])
+            text = self._format_str.format(*self._text[0], **self._text[1])
         except ValueError as e:
-            text = f"uncompatible format {self.format_str} and {self.text}"
-        text_render = self.font.render(
-                text,
-                self.antialias,
-                self.color)
-        self.setImage(text_render)
-        self._update_position()
-        self._redraw()
+            text = f"uncompatible format {self._format_str} and {self._text}"
+        return text
+
+    @text.setter
+    def text(self, *args, **kwargs):
+        self.setText(*args, **kwargs)
+
+    @property
+    def spacing(self):
+        return self._spacing
+
+    @spacing.setter
+    def spacing(self, amount):
+        self._spacing = amount
+        self._renderText()
+
 
     @property
     def bold(self):
@@ -362,20 +484,6 @@ class TextSprite(Sprite):
         self.font.strikerthrough = val
         self._renderText()
 
-    def setFormatString(self, format_str):
-        self.format_str = format_str
-        self._renderText()
-        return self
-
-    def setColor(self, color):
-        self.color = color
-        self._renderText()
-        return self
-
-    def setText(self, *args, **kwargs):
-        self.text = [args, kwargs]
-        self._renderText()
-        return self
 
 # dynamic resizable surface with sprites
 class Screen:
