@@ -14,7 +14,7 @@
 import oscpy as osc
 from oscpy.server import OSCThreadServer
 from oscpy.client import OSCClient
-from mugic_pygame_helpers import Screen, TextSprite, Color
+from mugic_pygame_helpers import Window, WindowScreen, TextSprite, Color
 import time
 import math
 from math import pi
@@ -26,17 +26,14 @@ import sys
 import pygame
 from threading import Timer
 
+# helper functions
+def _log_scale(number):
+    sign = -1 if number < 0 else 1
+    return (math.log(abs(number)+1)/2.0) * sign
+
 # Base Classes
 
-# interface for an IMU controller
-# TODO add methods to map datagrams to understandable motions
-# methods to add:
-# * accel, orientation, quat_orientation, gyro
-# * movingLeft, movingRight, movingUp, movingDown
-# * flippingLeft, flippingRight, flippingForward, flippingBack
-# * facingForward, facingBackward, facingLeft, facingRight
-# * facingUp, facingDown
-# * compassAngle
+# interface for an IMU device
 class IMU:
     # Generic 9-axis Datagram structure
     # Datagram types and structure
@@ -82,6 +79,11 @@ class IMU:
         if raw: return datagrams
         return [self._calibrate(d) for d in datagrams]
 
+    @staticmethod
+    def _datagram_to_string(datagram):
+        data_string = ",".join([str(v) for v in datagram.values()])
+        return data_string
+
     def refresh(self):
         if len(self._data) == 0: return None
         self._dirty = True
@@ -105,7 +107,8 @@ class IMU:
         self._zero['MZ'] = 0
 
     def _calibrate(self, datagram):
-        calibrated_quat = IMU.quaternion(datagram) * IMU.quaternion(self._zero).conjugate()
+        calibrated_quat = (IMU.to_quaternion(datagram) *
+                           IMU.to_quaternion(self._zero).conjugate())
         for key, value in self._zero.items():
             datagram[key] -= value
         datagram['QW'] = calibrated_quat.w
@@ -115,17 +118,55 @@ class IMU:
         return datagram
 
     @staticmethod
-    def quaternion(datagram):
+    def to_quaternion(datagram):
         if datagram['QW'] == 0: return quat.Quaternion(1, 0, 0, 0)
         return quat.Quaternion(datagram['QW'], datagram['QX'],
                                datagram['QY'], datagram['QZ'])
+
+# TODO add methods to map datagrams to understandable motions
+# methods to add:
+# * accel, orientation, quat_orientation, gyro
+# * movingLeft, movingRight, movingUp, movingDown
+# * flippingLeft, flippingRight, flippingForward, flippingBack
+# * facingForward, facingBackward, facingLeft, facingRight
+# * facingUp, facingDown
+# * compassAngle
+class IMUController(IMU):
+    def __init__(self, max_buffer=1000):
+        super().__init__()
+        self._connected = False
+        self.max_buffer = max_buffer
+
+    @classmethod
+    def _parse_datagram(cls, *values):
+        values = [t(v) for t, v in zip(cls.types, values)]
+        datagram = dict(zip(cls.datagram, values))
+        return datagram
+
+    def _callback(self, *values):
+        datagram = self._parse_datagram(*values)
+        self._data.appendleft(datagram)
+        if self.max_buffer and len(self._data) > self.max_buffer:
+            self._data.pop()
+        self._dirty = True
+        self._connected = True
+
+    def connected(self):
+        return self._connected or len(self._data) != 0
+
+    def calibrate(self, *args):
+        if len(self._data) != 0 and len(args) == 0:
+            super().calibrate(*self.peekDatagram(raw=True).values())
+        else:
+            super().calibrate(*args)
+        self._dirty = True
 
 #  connected          - gets connection status of the mugic device
 #  get_datagram       - get the next datagram from the mugic device
 #  get_datagrams      - get the all the datagrams from the mugic device
 #  calibrate          - set calibration data
 #  get_image          - gets the 3d visualization of the mugic device
-class MugicDevice(IMU):
+class MugicDevice(IMUController):
     # Datagram signature
     types= [float if t == 'f' else int for t in 'fffffffffffffffffiiiiifi']
     # Datagram structure
@@ -141,32 +182,11 @@ class MugicDevice(IMU):
         'seqnum', # messagesequence number
     )
 
-    def __init__(self, port=4000, max_buffer=10000):
-        super().__init__()
+    def __init__(self, port=4000, max_buffer=1000):
+        super().__init__(max_buffer)
         self.port = port
-        self.max_buffer = max_buffer
         self._mugic_init()
-        self._connected = False
         return
-
-    @staticmethod
-    def _parse_datagram(*values):
-        values = [t(v) for t, v in zip(MugicDevice.types, values)]
-        datagram = dict(zip(MugicDevice.datagram, values))
-        return datagram
-
-    @staticmethod
-    def _datagram_to_string(datagram):
-        data_string = ",".join([str(v) for v in datagram.values()])
-        return data_string
-
-    def _callback(self, *values):
-        datagram = MugicDevice._parse_datagram(*values)
-        self._data.appendleft(datagram)
-        if self.max_buffer and len(self._data) > self.max_buffer:
-            self._data.pop()
-        self._dirty = True
-        self._connected = True
 
     def _mugic_init(self):
         # prepare for connection
@@ -177,16 +197,6 @@ class MugicDevice(IMU):
                 address=address, port=self.port, default=True)
         self._osc_server.bind(b'/mugicdata', self._callback)
         return
-
-    def calibrate(self, *args):
-        if len(self._data) != 0 and len(args) == 0:
-            super().calibrate(*self.peekDatagram(raw=True).values())
-        else:
-            super().calibrate(*args)
-        self._dirty = True
-
-    def connected(self):
-        return self._connected or len(self._data) != 0
 
 # mock mugic device - used to simulate a mugic device
 class MockMugicDevice(MugicDevice):
@@ -324,12 +334,20 @@ class IMUDisplay:
         self._image_cube = graph3d.Cube(Color.magenta, Color.cyan, Color.orange)
         self._image_cube += (-0.5, -0.5, -0.5)
         self._image_cube *= (0.8, 0.5, 0.2)
+        self._image_accel = graph3d.Axis(Color.red, width = 2)
+        self._image_magnet = graph3d.Axis(Color.blue, width = 2) * (0.1, 0.1, 0.1)
+        self._image_gyro = graph3d.Axis(Color.green, width = 2) * (0.2, 0.2, 0.2)
         self._camera = graph3d.Camera()
         self._image_rotationx = -pi/2
         self._image_rotationy = pi/2
+        #self._image_rotationx = 0
+        #self._image_rotationy = 0
         self._camera.rotateY(self._image_rotationy)
         self._camera.rotateX(self._image_rotationx)
         self._camera["cube"] = self._image_cube
+        self._camera["accel"] = self._image_accel
+        self._camera["compass"] = self._image_magnet
+        self._camera["gyro"] = self._image_gyro
         self._camera["axes"] = graph3d.Axes(Color.red, Color.green, Color.blue)
 
     def getImage(self, w=None, h=None):
@@ -340,13 +358,29 @@ class IMUDisplay:
             # apply datagram transformations
             datagram = self._imu.peekDatagram()
             if datagram is not None:
+                # Y and X switched
                 data_quat = quat.Quaternion(
                         datagram['QW'],
                         datagram['QX'],
                         datagram['QY'],
                         datagram['QZ'])
+                accel_data = quat.Vector(
+                        _log_scale(datagram['AX']),
+                        _log_scale(datagram['AY']),
+                        _log_scale(datagram['AZ']))
+                magnet_data = quat.Vector(
+                        _log_scale(datagram['MX']),
+                        _log_scale(datagram['MY']),
+                        _log_scale(datagram['MZ']))
+                gyro_data = quat.Vector(
+                        _log_scale(datagram['GX']),
+                        _log_scale(datagram['GY']),
+                        _log_scale(datagram['GZ']))
                 #print(quat.euler(data_quat))
                 self._camera["cube"] = self._image_cube @ data_quat
+                self._camera["accel"] = self._image_accel * accel_data
+                self._camera["gyro"] = self._image_gyro * gyro_data
+                self._camera["compass"] = self._image_magnet * magnet_data
             self._camera.show(self.image)
         except AttributeError as e:
             if hasattr(self, "_image_cube"): raise AttributeError(e)
@@ -387,8 +421,8 @@ def _viewMugicDevice(mugic_device):
     pygame.init()
     # window setup
     window_size = (500, 500)
-    pygame.display.set_mode(window_size)
-    pygame.display.set_caption("PyMugic IMU orientation visualization")
+    Window().rescale(*window_size)
+    Window().name = "PyMugic IMU orientation visualization"
     display = pygame.display.get_surface()
     frames = 0
     ticks = pygame.time.get_ticks()
@@ -396,12 +430,22 @@ def _viewMugicDevice(mugic_device):
     mugic_display = IMUDisplay(mugic_device)
     mugic_display.setImageSize(*window_size)
     # object setup
-    display_screen = Screen(*window_size).setScreen(display)
-    text_display = TextSprite()
-    display_screen.addSprite(text_display)
-    text_display.setFormatString("fps: {}")
-    text_display.setText("NOT CONNECTED").setFontSize(30)
-    text_display.moveTo(50, 50)
+    display_screen = WindowScreen(*window_size)
+    Window().addScreen(display_screen)
+    fps_text = TextSprite()
+    mugic_data_text = TextSprite()
+    display_screen.addSprite(fps_text)
+    display_screen.addSprite(mugic_data_text)
+    fps_text.setFormatString("fps: {}")
+    fps_text.setText("NOT CONNECTED").setFontSize(30)
+    fps_text.moveTo(50, 50)
+    display_labels = ["quaternion", "accel", "gyro", "magnetometer", "battery"]
+    display_format_string = '\n'.join(
+            [value+": {}" for value in display_labels])
+    mugic_data_text.setFormatString(display_format_string)
+    mugic_data_text.moveTo(50, 100)
+    mugic_data_text.setFontSize(20)
+    mugic_data_text.hide()
     display_screen._redraw()
     pygame.display.flip()
     # variables
@@ -413,8 +457,9 @@ def _viewMugicDevice(mugic_device):
             (event.type == pygame.KEYDOWN
              and event.key == pygame.K_ESCAPE)):
             break
+        elif event.type == pygame.VIDEORESIZE:
+            Window()._resize_window(event.w, event.h)
         state = pygame.key.get_pressed()
-
         rot_amount = pi/180
         if state[pygame.K_a]:
             mugic_display.rotateImageY(-rot_amount)
@@ -443,12 +488,14 @@ def _viewMugicDevice(mugic_device):
             mugic_image = mugic_display.getImage()
             mugic_device.popDatagram()
             display_screen._redraw()
+            mugic_image = pygame.transform.scale_by(mugic_image,
+                                                 display_screen._scale)
             display.blit(mugic_image, (0, 0))
             mugic_device.dirty = False
         else:
             time.sleep(.01)
         fps_value = ((frames*1000)/(pygame.time.get_ticks()-ticks))
-        text_display.setText(round(fps_value, 3))
+        fps_text.setText(round(fps_value, 3))
         pygame.display.flip()
     pygame.quit()
 

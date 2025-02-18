@@ -25,7 +25,7 @@ class Line:
         _, xe, ye, ze = self.end
         if zs == 0 or ze == 0: return
         # Handle perspective and scale to display
-       # Viewing area is square
+        # Viewing area is square
         w = surface.get_width()//4
         h = surface.get_height()//4
         w = min(w, h)
@@ -45,17 +45,17 @@ class Line:
                 self.width)
 
     def __add__(self, to):  # to is a Point or 3-tuple
-        return Line(self.start + to, self.end + to, self.color)
+        return Line(self.start + to, self.end + to, self.color, self.width)
 
     def __sub__(self, v):  # to is a Point or 3-tuple
-        return Line(self.start - v, self.end - v, self.color)
+        return Line(self.start - v, self.end - v, self.color, self.width)
 
     def __mul__(self, by):  # by is a 3-tuple
-        return Line(self.start * by, self.end * by, self.color)
+        return Line(self.start * by, self.end * by, self.color, self.width)
 
     def __matmul__(self, rot):  # rot is a rotation quaternion
         #assert rot.isrot()
-        return Line(self.start @ rot, self.end @ rot, self.color)
+        return Line(self.start @ rot, self.end @ rot, self.color, self.width)
 
     def camera(self, rot, distance):  # rot is a rotation quaternion, distance is scalar
         #assert rot.isrot()
@@ -64,7 +64,7 @@ class Line:
         ps = Point(ps.x * distance, ps.y * distance, distance - ps.z)
         pe = self.end @ rot
         pe = Point(pe.x * distance, pe.y * distance, distance - pe.z)
-        return Line(ps, pe, self.color)
+        return Line(ps, pe, self.color, self.width)
 
     def __str__(self):
         return 'start {} end {}'.format(self.start, self.end)
@@ -105,20 +105,25 @@ class Shape:
         return r
 
 class Axes(Shape):
-    def __init__(self, xcolor, ycolor=None, zcolor=None):
+    def __init__(self, xcolor, ycolor=None, zcolor=None, width=1):
         if ycolor == None: ycolor = xcolor
         if zcolor == None: zcolor = xclolor
-        l = (Line(Point(-1.0, 0, 0), Point(1.0, 0, 0), xcolor),
-             Line(Point(0, -1.0, 0), Point(0, 1.0, 0), ycolor),
-             Line(Point(0, 0, -1.0), Point(0, 0, 1.0), zcolor))
+        l = (Line(Point(-1.0, 0, 0), Point(1.0, 0, 0), xcolor, width),
+             Line(Point(0, -1.0, 0), Point(0, 1.0, 0), ycolor, width),
+             Line(Point(0, 0, -1.0), Point(0, 0, 1.0), zcolor, width))
+        super().__init__(l)
+
+class Axis(Shape):
+    def __init__(self, color, p0=(0, 0, 0), p1=(1, 0, 0), width=1):
+        l = (Line(Point(*p0), Point(*p1), color, width),)
         super().__init__(l)
 
 class Square(Shape):  # Unit square in XY plane
-    def __init__(self, color):  # Corner located at origin
-        l = (Line(Point(0, 0, 0), Point(1, 0, 0), color),
-             Line(Point(1, 0, 0), Point(1, 1, 0), color),
-             Line(Point(1, 1, 0), Point(0, 1, 0), color),
-             Line(Point(0, 1, 0), Point(0, 0, 0), color))
+    def __init__(self, color, width=1):  # Corner located at origin
+        l = (Line(Point(0, 0, 0), Point(1, 0, 0), color, width),
+             Line(Point(1, 0, 0), Point(1, 1, 0), color, width),
+             Line(Point(1, 1, 0), Point(0, 1, 0), color, width),
+             Line(Point(0, 1, 0), Point(0, 0, 0), color, width))
         super().__init__(l)
 
 class Cube(Shape):
@@ -141,7 +146,7 @@ class Cube(Shape):
         super().__init__(l)
 
 class Cone(Shape):
-    def __init__(self, color, segments=12):
+    def __init__(self, color, segments=12, width=1):
         rot = Rotator(2*pi/segments, 0, 1, 0)
         p0 = Point(1, 1, 0)
         p1 = p0.copy()
@@ -149,27 +154,27 @@ class Cone(Shape):
         lines = []
         for _ in range(segments + 1):
             p1 @= rot
-            lines.append(Line(p0, p1, color))
-            lines.append(Line(orig, p0, color))
+            lines.append(Line(p0, p1, color, width))
+            lines.append(Line(orig, p0, color, width))
             p0 @= rot
         super().__init__(lines)
 
 class Circle(Shape):  # Unit circle in XY plane centred on origin
-    def __init__(self, color, segments=12):
+    def __init__(self, color, segments=12, width=1):
         rot = Rotator(2*pi/segments, 0, 1, 0)
         p0 = Point(1, 0, 0)
         p1 = p0.copy()
         lines = []
         for _ in range(segments + 1):
             p1 @= rot
-            lines.append(Line(p0, p1, color))
+            lines.append(Line(p0, p1, color, width))
             p0 @= rot
         super().__init__(lines)
 
 class Sphere(Shape):  # Unit sphere in XY plane centred on origin
-    def __init__(self, color, segments=12):
+    def __init__(self, color, segments=12, width=1):
         lines = []
-        s = Circle(color)
+        s = Circle(color, width=width)
         xrot = Rotator(2 * pi / segments, 1, 0, 0)
         for _ in range(segments / 2 + 1):
             gc.collect()

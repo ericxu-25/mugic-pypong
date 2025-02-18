@@ -373,7 +373,7 @@ class TextSprite(Sprite):
         return self
 
     def setText(self, *args, **kwargs):
-        self._text = [args, kwargs]
+        self._text = (args, kwargs)
         self._renderText()
         return self
 
@@ -429,9 +429,10 @@ class TextSprite(Sprite):
     @property
     def text(self):
         try:
-            text = self._format_str.format(*self._text[0], **self._text[1])
-        except ValueError as e:
-            text = f"uncompatible format {self._format_str} and {self._text}"
+            text = self._format_str.format(
+                    *(self._text[0]), **(self._text[1]))
+        except (ValueError, IndexError) as e:
+            text = f"incompatible format {self._format_str} and {self._text}"
         return text
 
     @text.setter
@@ -485,7 +486,7 @@ class TextSprite(Sprite):
         self._renderText()
 
 
-# dynamic resizable surface with sprites
+# dynamic resizable surface with sprites and event handling
 class Screen:
     def __init__(self, w = None, h = None, padding = None):
         self.name = "screen"
@@ -521,6 +522,10 @@ class Screen:
     @screen.setter
     def screen(self, new_screen):
         self.setScreen(new_screen)
+
+    @property
+    def scale(self):
+        return self._scale
 
     # setScreen - does not update the screen ratio
     def setScreen(self, new_screen):
@@ -660,6 +665,7 @@ class WindowScreen(Screen):
 
     def _render(self):
         self._draw_sprites()
+        # if screen is not a subsurface, draw directly onto the window
         if self._screen.get_parent() is None:
             self._window.window.blit(self._screen, self.position)
 
@@ -811,9 +817,9 @@ class Game(WindowScreen):
 
 # Screen manager
 class Window:
-    def __new__(cls):
+    def __new__(cls, *args, **kwargs):
         if not hasattr(cls, 'singleton'):
-            cls.singleton = super().__new__(cls)
+            cls.singleton = super().__new__(cls, *args, **kwargs)
             cls.singleton.initialize()
         return cls.singleton
 
