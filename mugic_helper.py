@@ -439,10 +439,22 @@ def _viewMugicDevice(mugic_device):
     fps_text.setFormatString("fps: {}")
     fps_text.setText("NOT CONNECTED").setFontSize(30)
     fps_text.moveTo(50, 50)
-    display_labels = ["quaternion", "accel", "gyro", "magnetometer", "battery"]
+    display_labels = ["quaternion", "accel", "gyro", "magnetometer", "battery", "frame"]
     display_format_string = '\n'.join(
             [value+": {}" for value in display_labels])
     mugic_data_text.setFormatString(display_format_string)
+    def _update_data_text(**mugic_datagram):
+        md = mugic_datagram
+        quat = "{:>5.2f}, {:>5.2f}, {:>5.2f}, {:>5.2f}"\
+                .format(md['QW'], md['QX'], md['QY'], md['QZ'])
+        data_row = "{:>6.2f}, {:>6.2f}, {:>6.2f}"
+        accel = data_row.format(md['AX'], md['AY'], md['AZ'])
+        gyro = data_row.format(md['GX'], md['GY'], md['GZ'])
+        mag = data_row.format(md['MX'], md['MY'], md['MZ'])
+        battery = "{:.2f}".format(md['Battery'])
+        seq = md['seqnum']
+        mugic_data_text.setText(quat, accel, gyro,
+                                mag, battery, seq)
     mugic_data_text.moveTo(50, 100)
     mugic_data_text.setFontSize(20)
     mugic_data_text.hide()
@@ -459,6 +471,9 @@ def _viewMugicDevice(mugic_device):
             break
         elif event.type == pygame.VIDEORESIZE:
             Window()._resize_window(event.w, event.h)
+        elif (event.type == pygame.KEYDOWN
+              and event.key == pygame.K_f):
+            mugic_data_text.toggleVisibility()
         state = pygame.key.get_pressed()
         rot_amount = pi/180
         if state[pygame.K_a]:
@@ -482,6 +497,8 @@ def _viewMugicDevice(mugic_device):
         if datagram is not None:
             last_datagram = datagram.values()
             frames += 1
+            if mugic_data_text.visible:
+                _update_data_text(**datagram)
             mugic_device.dirty = True
 
         if mugic_device.dirty:

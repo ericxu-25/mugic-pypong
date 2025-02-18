@@ -254,6 +254,10 @@ class Sprite(pygame.sprite.DirtySprite):
         self._redraw()
         return self
 
+    def toggleVisibility(self):
+        if self.visible: self.hide()
+        else: self.show()
+
     def debugPrint(self, *args, **kwargs):
         if self._debug:
             print("["+self.name+"]", *args, **kwargs)
