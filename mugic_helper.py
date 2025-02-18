@@ -273,7 +273,14 @@ class MockMugicDevice(MugicDevice):
 class IMUDisplay:
     def __init__(self, imu):
         self._imu = imu
+        self._init_text()
         self._init_image(100, 100)
+
+    def _init_text(self):
+        self._text = "No Connection"
+        display_labels = ["quaternion", "accel", "gyro", "magnetometer", "battery", "frame"]
+        self._format_text = '\n'.join(
+            [value+": {}" for value in display_labels])
 
     def _init_image(self, w, h):
         self._image_size = (w, h)
@@ -354,39 +361,56 @@ class IMUDisplay:
         w, h = self._set_image_size(w, h)
         if not self._imu.dirty: return self._image
         try:
-            self.image.fill(Color.black)
-            # apply datagram transformations
-            datagram = self._imu.peekDatagram()
-            if datagram is not None:
-                # Y and X switched
-                data_quat = quat.Quaternion(
-                        datagram['QW'],
-                        datagram['QX'],
-                        datagram['QY'],
-                        datagram['QZ'])
-                accel_data = quat.Vector(
-                        _log_scale(datagram['AX']),
-                        _log_scale(datagram['AY']),
-                        _log_scale(datagram['AZ']))
-                magnet_data = quat.Vector(
-                        _log_scale(datagram['MX']),
-                        _log_scale(datagram['MY']),
-                        _log_scale(datagram['MZ']))
-                gyro_data = quat.Vector(
-                        _log_scale(datagram['GX']),
-                        _log_scale(datagram['GY']),
-                        _log_scale(datagram['GZ']))
-                #print(quat.euler(data_quat))
-                self._camera["cube"] = self._image_cube @ data_quat
-                self._camera["accel"] = self._image_accel * accel_data
-                self._camera["gyro"] = self._image_gyro * gyro_data
-                self._camera["compass"] = self._image_magnet * magnet_data
-            self._camera.show(self.image)
+            _ = self._image_cube
         except AttributeError as e:
             if hasattr(self, "_image_cube"): raise AttributeError(e)
             self._init_image_cube()
             return self.getImage(w, h)
+        self.image.fill(Color.black)
+        # apply datagram transformations
+        datagram = self._imu.peekDatagram()
+        if datagram is not None:
+            # Y and X switched
+            data_quat = quat.Quaternion(
+                    datagram['QW'],
+                    datagram['QX'],
+                    datagram['QY'],
+                    datagram['QZ'])
+            accel_data = quat.Vector(
+                    _log_scale(datagram['AX']),
+                    _log_scale(datagram['AY']),
+                    _log_scale(datagram['AZ']))
+            magnet_data = quat.Vector(
+                    _log_scale(datagram['MX']),
+                    _log_scale(datagram['MY']),
+                    _log_scale(datagram['MZ']))
+            gyro_data = quat.Vector(
+                    _log_scale(datagram['GX']),
+                    _log_scale(datagram['GY']),
+                    _log_scale(datagram['GZ']))
+            #print(quat.euler(data_quat))
+            self._camera["cube"] = self._image_cube @ data_quat
+            self._camera["accel"] = self._image_accel * accel_data
+            self._camera["gyro"] = self._image_gyro * gyro_data
+            self._camera["compass"] = self._image_magnet * magnet_data
+        self._camera.show(self.image)
         return self.image
+
+    def getText(self):
+        if not self._imu.dirty: return self._text
+        md = self._imu.peekDatagram()
+        if md == None: return self._text
+        quat = "{:>5.2f}, {:>5.2f}, {:>5.2f}, {:>5.2f}"\
+                .format(md['QW'], md['QX'], md['QY'], md['QZ'])
+        data_row = "{:>6.2f}, {:>6.2f}, {:>6.2f}"
+        accel = data_row.format(md['AX'], md['AY'], md['AZ'])
+        gyro = data_row.format(md['GX'], md['GY'], md['GZ'])
+        mag = data_row.format(md['MX'], md['MY'], md['MZ'])
+        battery = "{:.2f}".format(md['Battery'])
+        seq = md['seqnum']
+        self._text = self._format_text.format(quat, accel, gyro,
+                                        mag, battery, seq)
+        return self._text
 
 # TESTING FUNCTIONS BELOW
 def _recordMugicDevice(mugic, datafile, seconds=60):
@@ -439,22 +463,7 @@ def _viewMugicDevice(mugic_device):
     fps_text.setFormatString("fps: {}")
     fps_text.setText("NOT CONNECTED").setFontSize(30)
     fps_text.moveTo(50, 50)
-    display_labels = ["quaternion", "accel", "gyro", "magnetometer", "battery", "frame"]
-    display_format_string = '\n'.join(
-            [value+": {}" for value in display_labels])
-    mugic_data_text.setFormatString(display_format_string)
-    def _update_data_text(**mugic_datagram):
-        md = mugic_datagram
-        quat = "{:>5.2f}, {:>5.2f}, {:>5.2f}, {:>5.2f}"\
-                .format(md['QW'], md['QX'], md['QY'], md['QZ'])
-        data_row = "{:>6.2f}, {:>6.2f}, {:>6.2f}"
-        accel = data_row.format(md['AX'], md['AY'], md['AZ'])
-        gyro = data_row.format(md['GX'], md['GY'], md['GZ'])
-        mag = data_row.format(md['MX'], md['MY'], md['MZ'])
-        battery = "{:.2f}".format(md['Battery'])
-        seq = md['seqnum']
-        mugic_data_text.setText(quat, accel, gyro,
-                                mag, battery, seq)
+    mugic_data_text.setFormatString("{}")
     mugic_data_text.moveTo(50, 100)
     mugic_data_text.setFontSize(20)
     mugic_data_text.hide()
@@ -497,8 +506,6 @@ def _viewMugicDevice(mugic_device):
         if datagram is not None:
             last_datagram = datagram.values()
             frames += 1
-            if mugic_data_text.visible:
-                _update_data_text(**datagram)
             mugic_device.dirty = True
 
         if mugic_device.dirty:
@@ -508,6 +515,7 @@ def _viewMugicDevice(mugic_device):
             mugic_image = pygame.transform.scale_by(mugic_image,
                                                  display_screen._scale)
             display.blit(mugic_image, (0, 0))
+            mugic_data_text.setText(mugic_display.getText())
             mugic_device.dirty = False
         else:
             time.sleep(.01)
