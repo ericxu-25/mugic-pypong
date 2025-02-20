@@ -33,9 +33,9 @@ def _log_scale(number):
 
 # Base Classes
 
-# interface for an IMU device
+# interface for a generic IMU device
 class IMU:
-    # Generic 9-axis Datagram structure
+    # assumes 9-axis Datagram structure
     # Datagram types and structure
     types = [float] * 16
     datagram = (
@@ -46,9 +46,15 @@ class IMU:
         'QW', 'QX', 'QY', 'QZ', # Quaternion angles
     )
 
-    def __init__(self):
-        self._data = deque()
+    def __init__(self, buffer_size=100, smoothing=10):
         self.dirty = False
+        if smoothing == None: smoothing = 1
+        self.smoothing = smoothing
+        if buffer_size == None:
+            print("Warning - IMU unlimited buffer size!")
+            self._data = deque()
+        else:
+            self._data = deque(maxlen=buffer_size)
         self.zero()
 
     @property
@@ -61,17 +67,23 @@ class IMU:
     def dirty(self, val):
         self._dirty = bool(val)
 
-    def peekDatagram(self, raw=False):
+    def peekDatagram(self, raw=False, smooth=True):
         if len(self._data) == 0: return None
-        datagram = self._data[-1].copy()
-        if raw: return datagram
-        return self._calibrate(datagram)
+        if not smooth:
+            datagrams = list(self._data[-1].copy())
+        else:
+            datagrams = [self._data[-i].copy() for i in range(min(len(self._data), self.smoothing))]
+        return self._smooth(datagrams, raw)
 
-    def popDatagram(self, raw=False):
+    def popDatagram(self, raw=False, smooth=True):
         if len(self._data) == 0: return None
-        datagram = self._data.pop()
-        if raw: return datagram
-        return self._calibrate(datagram)
+        datagrams = [self._data.pop()]
+        if not smooth:
+            return self._smooth(datagrams, raw)
+        for i in range(self.smoothing):
+            if i+1 > len(self._data): break
+            datagrams.append(self._data[-i-1])
+        return self._smooth(datagrams, raw)
 
     def popDatagrams(self, raw=False):
         datagrams = self._data.copy()
@@ -117,6 +129,29 @@ class IMU:
         datagram['QZ'] = calibrated_quat.z
         return datagram
 
+    # returns smoothed datagram via moving average
+    def _smooth(self, datagrams, raw=False):
+        if len(datagrams) == 1:
+            if raw: return datagrams[0]
+            return self._calibrate(datagrams[0])
+        smoothed_datagram = datagrams[0]
+        for datagram in datagrams[1:]:
+            for value in self.__class__.datagram:
+                smoothed_datagram[value] += datagram[value]
+        for value in self.__class__.datagram:
+            smoothed_datagram[value] /= len(datagrams)
+        # technically should use nlerp, but
+        # moving average should work fine with close quat values
+        # as long as we make sure to normalize it
+        norm_quat = IMU.to_quaternion(smoothed_datagram).normalise()
+        smoothed_datagram['QW'] = norm_quat.w
+        smoothed_datagram['QX'] = norm_quat.x
+        smoothed_datagram['QY'] = norm_quat.y
+        smoothed_datagram['QZ'] = norm_quat.z
+        if raw: return smoothed_datagram
+        return self._calibrate(smoothed_datagram)
+
+
     @staticmethod
     def to_quaternion(datagram):
         if datagram['QW'] == 0: return quat.Quaternion(1, 0, 0, 0)
@@ -125,6 +160,8 @@ class IMU:
 
 # TODO add methods to map datagrams to understandable motions
 # methods to add:
+# * Madgwick Filter? - no quats are done for us
+# * current state (position + datagram)
 # * accel, orientation, quat_orientation, gyro
 # * movingLeft, movingRight, movingUp, movingDown
 # * flippingLeft, flippingRight, flippingForward, flippingBack
@@ -132,10 +169,9 @@ class IMU:
 # * facingUp, facingDown
 # * compassAngle
 class IMUController(IMU):
-    def __init__(self, max_buffer=1000):
-        super().__init__()
+    def __init__(self, buffer_size=20):
+        super().__init__(buffer_size)
         self._connected = False
-        self.max_buffer = max_buffer
 
     @classmethod
     def _parse_datagram(cls, *values):
@@ -146,8 +182,6 @@ class IMUController(IMU):
     def _callback(self, *values):
         datagram = self._parse_datagram(*values)
         self._data.appendleft(datagram)
-        if self.max_buffer and len(self._data) > self.max_buffer:
-            self._data.pop()
         self._dirty = True
         self._connected = True
 
@@ -161,11 +195,6 @@ class IMUController(IMU):
             super().calibrate(*args)
         self._dirty = True
 
-#  connected          - gets connection status of the mugic device
-#  get_datagram       - get the next datagram from the mugic device
-#  get_datagrams      - get the all the datagrams from the mugic device
-#  calibrate          - set calibration data
-#  get_image          - gets the 3d visualization of the mugic device
 class MugicDevice(IMUController):
     # Datagram signature
     types= [float if t == 'f' else int for t in 'fffffffffffffffffiiiiifi']
@@ -182,8 +211,8 @@ class MugicDevice(IMUController):
         'seqnum', # messagesequence number
     )
 
-    def __init__(self, port=4000, max_buffer=1000):
-        super().__init__(max_buffer)
+    def __init__(self, port=4000, buffer_size=20):
+        super().__init__(buffer_size)
         self.port = port
         self._mugic_init()
         return
@@ -200,8 +229,8 @@ class MugicDevice(IMUController):
 
 # mock mugic device - used to simulate a mugic device
 class MockMugicDevice(MugicDevice):
-    def __init__(self, port=None, datafile=None, max_buffer=None):
-        super().__init__(port, max_buffer)
+    def __init__(self, port=None, datafile=None, buffer_size=None):
+        super().__init__(port, buffer_size)
         self._datafile = datafile
         address = '127.0.0.1'
         self._osc_client = OSCClient(address, port)
@@ -236,13 +265,13 @@ class MockMugicDevice(MugicDevice):
         if not self._datagram_is_ready(top): return False
         return True
 
-    def popDatagram(self, raw=False):
+    def popDatagram(self, raw=False, smooth=True):
         if not self._next_datagram_is_available(): return None
-        return super().popDatagram(raw)
+        return super().popDatagram(raw, smooth)
 
-    def peekDatagram(self, raw=False):
+    def peekDatagram(self, raw=False, smooth=True):
         if not self._next_datagram_is_available(): return None
-        return super().peekDatagram(raw)
+        return super().peekDatagram(raw, smooth)
 
     def popDatagrams(self, raw=False):
         datagrams = deque()
@@ -342,8 +371,8 @@ class IMUDisplay:
         self._image_cube += (-0.5, -0.5, -0.5)
         self._image_cube *= (0.8, 0.5, 0.2)
         self._image_accel = graph3d.Axis(Color.red, width = 2)
-        self._image_magnet = graph3d.Axis(Color.blue, width = 2) * (0.1, 0.1, 0.1)
-        self._image_gyro = graph3d.Axis(Color.green, width = 2) * (0.2, 0.2, 0.2)
+        self._image_gyro = graph3d.Axis(Color.blue, width = 2)
+        self._image_magnet = graph3d.Axis(Color.white, width = 2) * (0.1, 0.1, 0.1)
         self._camera = graph3d.Camera()
         self._image_rotationx = -pi/2
         self._image_rotationy = pi/2
@@ -351,13 +380,13 @@ class IMUDisplay:
         #self._image_rotationy = 0
         self._camera.rotateY(self._image_rotationy)
         self._camera.rotateX(self._image_rotationx)
-        self._camera["cube"] = self._image_cube
         self._camera["accel"] = self._image_accel
         self._camera["compass"] = self._image_magnet
         self._camera["gyro"] = self._image_gyro
+        self._camera["cube"] = self._image_cube
         self._camera["axes"] = graph3d.Axes(Color.red, Color.green, Color.blue)
 
-    def getImage(self, w=None, h=None):
+    def getImage(self, w=None, h=None, datagram=None):
         w, h = self._set_image_size(w, h)
         if not self._imu.dirty: return self._image
         try:
@@ -368,7 +397,8 @@ class IMUDisplay:
             return self.getImage(w, h)
         self.image.fill(Color.black)
         # apply datagram transformations
-        datagram = self._imu.peekDatagram()
+        if datagram == None:
+            datagram = self._imu.peekDatagram()
         if datagram is not None:
             # Y and X switched
             data_quat = quat.Quaternion(
@@ -385,14 +415,14 @@ class IMUDisplay:
                     _log_scale(datagram['MY']),
                     _log_scale(datagram['MZ']))
             gyro_data = quat.Vector(
-                    _log_scale(datagram['GX']),
-                    _log_scale(datagram['GY']),
-                    _log_scale(datagram['GZ']))
+                    _log_scale(datagram['GX']/360.0),
+                    _log_scale(datagram['GY']/360.0),
+                    _log_scale(datagram['GZ']/360.0))
             #print(quat.euler(data_quat))
-            self._camera["cube"] = self._image_cube @ data_quat
             self._camera["accel"] = self._image_accel * accel_data
             self._camera["gyro"] = self._image_gyro * gyro_data
             self._camera["compass"] = self._image_magnet * magnet_data
+            self._camera["cube"] = self._image_cube @ data_quat # + (quat.Vector(1, 0, 0) * accel_data)
         self._camera.show(self.image)
         return self.image
 
@@ -502,11 +532,12 @@ def _viewMugicDevice(mugic_device):
         elif state[pygame.K_c]:
             mugic_device.calibrate(*last_datagram)
 
-        datagram = mugic_device.peekDatagram(raw=True)
-        if datagram is not None:
-            last_datagram = datagram.values()
+        next_datagram = mugic_device.peekDatagram(raw=True)
+        if next_datagram is not None and next_datagram.values() != last_datagram:
+            last_datagram = next_datagram.values()
             frames += 1
             mugic_device.dirty = True
+            fps_value = ((frames*1000)/(pygame.time.get_ticks()-ticks))
 
         if mugic_device.dirty:
             mugic_image = mugic_display.getImage()
@@ -519,7 +550,6 @@ def _viewMugicDevice(mugic_device):
             mugic_device.dirty = False
         else:
             time.sleep(.01)
-        fps_value = ((frames*1000)/(pygame.time.get_ticks()-ticks))
         fps_text.setText(round(fps_value, 3))
         pygame.display.flip()
     pygame.quit()

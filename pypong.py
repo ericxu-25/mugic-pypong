@@ -348,7 +348,7 @@ class Ball(GameSprite):
         self.spin += (abs(striker_normal.x)) * spin_mod
         self.spin *= striker.elasticity
         # modification 3: striker rotation
-        self.spin += striker.rot_velocity / 4
+        self.spin += striker.rot_velocity / 6
         rotate_hit_vector = self._rotateHitOnStriker(striker)
         final_vector += rotate_hit_vector
         # stuck-proofing

@@ -12,6 +12,7 @@ import colorsys
 # * debug windows (1: game, 2: controller, 3: more controller)
 # * mugic controller module (calibration + implementation)
 # * springy striker (striker x velocity)
+# * sprite coloring support (ball color, striker color)
 # * port to godot
 
 # GLOBALS
