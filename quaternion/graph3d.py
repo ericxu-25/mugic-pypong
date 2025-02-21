@@ -215,8 +215,7 @@ class Sphere(Shape):  # Unit sphere in XY plane centred on origin
 class Camera:
     def __init__(self, rot=0, distance = 2):
         self.distance = distance
-        self.crotx = Rotator(rot, 1, 0, 0)
-        self.croty = Rotator(rot, 0, 1, 0)
+        self.crot = Rotator(1, 0, 0, 0)
         self.d = {}
 
     def __setitem__(self, key, value):
@@ -231,17 +230,25 @@ class Camera:
         del self.d[key]
 
     def show(self, surface):
-        crot = self.croty * self.crotx
         dz = self.distance
         for shape in self.d.values():
-            s = shape.camera(crot, dz)
+            s = shape.camera(self.crot, dz)
             s.show(surface)
 
     def rotateX(self, angle):
-        self.crotx = Rotator(angle, 1, 0, 0)
+        crotx = Rotator(angle, 1, 0, 0)
+        self.crot *= crotx
 
     def rotateY(self, angle):
-        self.croty = Rotator(angle, 0, 1, 0)
+        croty = Rotator(angle, 0, 1, 0)
+        self.crot *= croty
+
+    def rotateZ(self, angle):
+        crotz = Rotator(angle, 0, 0, 1)
+        self.crot *= crotz
+
+    def rotate(self, rot):
+        self.crot = rot
 
     def zoom(self, distance):
         self.distance += distance

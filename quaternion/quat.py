@@ -214,6 +214,31 @@ class Quaternion:
     def rrot(self, rot):
         return rot.conjugate() * self * rot
 
+    def dot(self, other):
+        if not isinstance(other, Quaternion):
+            length = _arglen(other)
+            if length == 3: other = Quaternion(0, *other)
+            elif length == 4: other = Quaternion(*other)
+            else: other = Quaternion(*[other for _ in self])
+        return sum([a*b for a, b in zip(self, other)])
+
+    def lerp(self, other, ratio):
+        if not isinstance(other, Quaternion):
+            length = _arglen(other)
+            if length == 3: other = Quaternion(0, *other)
+            elif length == 4: other = Quaternion(*other)
+            else: other = Quaternion(*[other for _ in self])
+        if self.dot(other) < 0: other = -other
+        result = Quaternion(0, 0, 0, 0)
+        result.w = self.w - ratio*(self.w - other.w)
+        result.x = self.x - ratio*(self.x - other.x)
+        result.y = self.y - ratio*(self.y - other.y)
+        result.z = self.z - ratio*(self.z - other.z)
+        return result
+
+    def nlerp(self, other, ratio):
+        return self.lerp(other, ratio).normalise()
+
 # A vector quaternion has real part 0. It can represent a point in space.
 def Vector(x, y, z):
     return Quaternion(0, x, y, z)

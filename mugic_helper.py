@@ -14,16 +14,17 @@
 import oscpy as osc
 from oscpy.server import OSCThreadServer
 from oscpy.client import OSCClient
-from mugic_pygame_helpers import Window, WindowScreen, TextSprite, Color
 import time
 import math
 from math import pi
 from collections import deque
 import quaternion.quat as quat
 import quaternion.graph3d as graph3d
+from array import array
 
 import sys
 import pygame
+from mugic_pygame_helpers import Window, WindowScreen, TextSprite, Color
 from threading import Timer
 
 # helper functions
@@ -37,23 +38,27 @@ def _log_scale(number):
 class IMU:
     # assumes 9-axis Datagram structure
     # Datagram types and structure
-    types = [float] * 16
+    types = [float] * 25
     datagram = (
         'AX', 'AY', 'AZ', # Accelerometer
         'EX', 'EY', 'EZ', # Euler angles
         'GX', 'GY', 'GZ', # Gyrometer
         'MX', 'MY', 'MZ', # Magnetometer
         'QW', 'QX', 'QY', 'QZ', # Quaternion angles
+        'VX', 'VY', 'VZ', # Velocity
+        'X', 'Y', 'Z',    # Position
     )
 
-    def __init__(self, buffer_size=100, smoothing=10):
+    def __init__(self, buffer_size=20, smoothing=3):
         self.dirty = False
         if smoothing == None: smoothing = 1
         self.smoothing = smoothing
         if buffer_size == None:
-            print("Warning - IMU unlimited buffer size!")
+            print("Warning - IMU uncapped buffer size!")
             self._data = deque()
         else:
+            if self.smoothing > buffer_size:
+                buffer_size = self.smoothing
             self._data = deque(maxlen=buffer_size)
         self.zero()
 
@@ -70,9 +75,9 @@ class IMU:
     def peekDatagram(self, raw=False, smooth=True):
         if len(self._data) == 0: return None
         if not smooth:
-            datagrams = list(self._data[-1].copy())
+            datagrams = [self._data[-1].copy()]
         else:
-            datagrams = [self._data[-i].copy() for i in range(min(len(self._data), self.smoothing))]
+            datagrams = [self._data[-i-1].copy() for i in range(min(len(self._data), self.smoothing))]
         return self._smooth(datagrams, raw)
 
     def popDatagram(self, raw=False, smooth=True):
@@ -91,11 +96,6 @@ class IMU:
         if raw: return datagrams
         return [self._calibrate(d) for d in datagrams]
 
-    @staticmethod
-    def _datagram_to_string(datagram):
-        data_string = ",".join([str(v) for v in datagram.values()])
-        return data_string
-
     def refresh(self):
         if len(self._data) == 0: return None
         self._dirty = True
@@ -104,23 +104,25 @@ class IMU:
         self._data.appendleft(last_datagram)
         return last_datagram
 
-    def zero(self, *args):
-        args = list(args)
-        while len(args) < len(IMU.datagram):
-            args.append(0)
-        for i in range(len(IMU.types)):
-            args[i] = IMU.types[i](args[i])
-        self._zero = dict(zip(IMU.datagram, args))
+    def zero(self, *args, **kwargs):
+        self._zero = dict()
+        for key in IMU.datagram:
+            self._zero[key] = 0
+        if len(args) != 0:
+            for key, arg in zip(self.datagram, args):
+                self._zero[key] = arg
+        self._zero.update(kwargs)
 
-    def calibrate(self, *args):
-        self.zero(*args)
+    def calibrate(self, *args, **kwargs):
+        self.zero(*args, **kwargs)
+        # don't calibrate magnetometer
         self._zero['MX'] = 0
         self._zero['MY'] = 0
         self._zero['MZ'] = 0
 
     def _calibrate(self, datagram):
         calibrated_quat = (IMU.to_quaternion(datagram) *
-                           IMU.to_quaternion(self._zero).conjugate())
+                           IMU.to_quaternion(self._zero).conjugate()).normalise()
         for key, value in self._zero.items():
             datagram[key] -= value
         datagram['QW'] = calibrated_quat.w
@@ -130,6 +132,7 @@ class IMU:
         return datagram
 
     # returns smoothed datagram via moving average
+    # might want to look into madgwick/kalman filter in the future
     def _smooth(self, datagrams, raw=False):
         if len(datagrams) == 1:
             if raw: return datagrams[0]
@@ -140,9 +143,6 @@ class IMU:
                 smoothed_datagram[value] += datagram[value]
         for value in self.__class__.datagram:
             smoothed_datagram[value] /= len(datagrams)
-        # technically should use nlerp, but
-        # moving average should work fine with close quat values
-        # as long as we make sure to normalize it
         norm_quat = IMU.to_quaternion(smoothed_datagram).normalise()
         smoothed_datagram['QW'] = norm_quat.w
         smoothed_datagram['QX'] = norm_quat.x
@@ -158,10 +158,28 @@ class IMU:
         return quat.Quaternion(datagram['QW'], datagram['QX'],
                                datagram['QY'], datagram['QZ'])
 
+    @staticmethod
+    def _datagram_to_string(datagram):
+        data_string = ",".join([str(v) for v in datagram.values()])
+        return data_string
+
+    # returns the in-between of two data points
+    @staticmethod
+    def lerp(d1, d2, ratio=0.5):
+        lerped_datagram = d1.copy()
+        for val in d1.keys():
+            lerped_datagram[val] = d1[val] + ratio*(d1[val]- d2[val])
+        lerped_quat = IMU.to_quaternion(d1).nlerp(IMU.to_quaternion(d2), ratio)
+        lerped_datagram['QW'] = lerped_quat.w
+        lerped_datagram['QX'] = lerped_quat.x
+        lerped_datagram['QY'] = lerped_quat.y
+        lerped_datagram['QZ'] = lerped_quat.z
+        return lerped_datagram
+
+
 # TODO add methods to map datagrams to understandable motions
 # methods to add:
-# * Madgwick Filter? - no quats are done for us
-# * current state (position + datagram)
+# * current state (position + datagram), using delta time & lerp
 # * accel, orientation, quat_orientation, gyro
 # * movingLeft, movingRight, movingUp, movingDown
 # * flippingLeft, flippingRight, flippingForward, flippingBack
@@ -169,9 +187,15 @@ class IMU:
 # * facingUp, facingDown
 # * compassAngle
 class IMUController(IMU):
-    def __init__(self, buffer_size=20):
-        super().__init__(buffer_size)
+    def __init__(self, buffer_size=20, smoothing=10):
+        super().__init__(buffer_size, smoothing)
         self._connected = False
+        self._time_stamp = time.time()
+        self._state = None
+        self.low_pass = 0.25
+        self._speed = array('d', [0, 0, 0])
+        self._position = array('d', [0, 0, 0])
+        self._angle_diff = array('d', [0, 0, 0])
 
     @classmethod
     def _parse_datagram(cls, *values):
@@ -181,6 +205,7 @@ class IMUController(IMU):
 
     def _callback(self, *values):
         datagram = self._parse_datagram(*values)
+        datagram = self._update_state(datagram)
         self._data.appendleft(datagram)
         self._dirty = True
         self._connected = True
@@ -188,16 +213,39 @@ class IMUController(IMU):
     def connected(self):
         return self._connected or len(self._data) != 0
 
-    def calibrate(self, *args):
+    def calibrate(self, *args, **kwargs):
         if len(self._data) != 0 and len(args) == 0:
-            super().calibrate(*self.peekDatagram(raw=True).values())
+            super().calibrate(**self.peekDatagram(raw=True))
         else:
-            super().calibrate(*args)
+            super().calibrate(*args, **kwargs)
+        # don't want to calibrate these three values
+        self._zero['Battery'] = 0
+        self._zero['seqnum'] = 0
+        self._zero['seconds'] = 0
+        self.low_pass = max((self._zero['AX'] + self._zero['AY'] + self._zero['AZ'])/6, 0.25)
         self._dirty = True
+
+    # because we are using a single IMU, there is ALOT of drift, which makes
+    # accurately getting position a challenge. So position and speed really
+    # just return the details of big gestures and return to rest otherwise
+    def _update_state(self, datagram):
+        now = time.time()
+        if self._state is not None:
+            delta_t = now - self._time_stamp
+            # solve for the change in speed/rot - take halfway point to approximate
+            accel = [(self._state[v] + datagram[v])/2.0 for v in ('AX', 'AY', 'AZ')]
+            for i in range(3):
+                self._speed[i] += accel[i] * delta_t if accel[i] > self.low_pass else -self._speed[i]
+                self._position[i] += self._speed[i] if accel[i] > self.low_pass else -self._position[i]
+        datagram['VX'], datagram['VY'], datagram['VZ']  = self._speed
+        datagram['X'], datagram['Y'], datagram['Z']  = self._position
+        self._state = datagram
+        self._time_stamp = now
+        return datagram
 
 class MugicDevice(IMUController):
     # Datagram signature
-    types= [float if t == 'f' else int for t in 'fffffffffffffffffiiiiifi']
+    types = [float if t == 'f' else int for t in 'fffffffffffffffffiiiiififffffffff']
     # Datagram structure
     datagram = (
         'AX', 'AY', 'AZ', # accelerometer
@@ -209,10 +257,12 @@ class MugicDevice(IMUController):
         'calib_sys', 'calib_gyro', 'calib_accel', 'calib_mag', # Calibration state
         'seconds', # since last reboot
         'seqnum', # messagesequence number
+        'VX', 'VY', 'VZ', # Velocity (not provided by IMU)
+        'X', 'Y', 'Z',    # Position (not provided by IMU)
     )
 
-    def __init__(self, port=4000, buffer_size=20):
-        super().__init__(buffer_size)
+    def __init__(self, port=4000, buffer_size=20, smoothing=3):
+        super().__init__(buffer_size, smoothing)
         self.port = port
         self._mugic_init()
         return
@@ -229,8 +279,8 @@ class MugicDevice(IMUController):
 
 # mock mugic device - used to simulate a mugic device
 class MockMugicDevice(MugicDevice):
-    def __init__(self, port=None, datafile=None, buffer_size=None):
-        super().__init__(port, buffer_size)
+    def __init__(self, port=None, datafile=None):
+        super().__init__(port, buffer_size=None, smoothing=None)
         self._datafile = datafile
         address = '127.0.0.1'
         self._osc_client = OSCClient(address, port)
@@ -307,7 +357,7 @@ class IMUDisplay:
 
     def _init_text(self):
         self._text = "No Connection"
-        display_labels = ["quaternion", "accel", "gyro", "magnetometer", "battery", "frame"]
+        display_labels = ["quaternion", "euler", "accel", "gyro", "magnetometer", "velocity", "position", "battery", "frame"]
         self._format_text = '\n'.join(
             [value+": {}" for value in display_labels])
 
@@ -337,18 +387,21 @@ class IMUDisplay:
 
     def rotateImageX(self, angle=1):
         try:
-            self._image_rotationx += angle
-            self._image_rotationx %= (2*pi)
-            self._camera.rotateX(self._image_rotationx)
+            self._camera.rotateX(angle)
         except AttributeError:
             self._init_image_cube()
         self._imu.dirty = True
 
     def rotateImageY(self, angle=1):
         try:
-            self._image_rotationy += angle
-            self._image_rotationy %= (2*pi)
-            self._camera.rotateY(self._image_rotationy)
+            self._camera.rotateY(angle)
+        except AttributeError:
+            self._init_image_cube()
+        self._imu.dirty = True
+
+    def rotateImageZ(self, angle=1):
+        try:
+            self._camera.rotateZ(angle)
         except AttributeError:
             self._init_image_cube()
         self._imu.dirty = True
@@ -374,12 +427,11 @@ class IMUDisplay:
         self._image_gyro = graph3d.Axis(Color.blue, width = 2)
         self._image_magnet = graph3d.Axis(Color.white, width = 2) * (0.1, 0.1, 0.1)
         self._camera = graph3d.Camera()
-        self._image_rotationx = -pi/2
-        self._image_rotationy = pi/2
-        #self._image_rotationx = 0
-        #self._image_rotationy = 0
-        self._camera.rotateY(self._image_rotationy)
-        self._camera.rotateX(self._image_rotationx)
+        # rotate camera to make visual easier to understand
+        self._camera.rotateX(-pi/2)
+        self._camera.rotateY(-pi)
+        self._camera.rotateZ(pi/2)
+        self._camera.rotateX(pi)
         self._camera["accel"] = self._image_accel
         self._camera["compass"] = self._image_magnet
         self._camera["gyro"] = self._image_gyro
@@ -400,12 +452,12 @@ class IMUDisplay:
         if datagram == None:
             datagram = self._imu.peekDatagram()
         if datagram is not None:
-            # Y and X switched
             data_quat = quat.Quaternion(
                     datagram['QW'],
                     datagram['QX'],
                     datagram['QY'],
                     datagram['QZ'])
+            data_quat = data_quat.normalise()
             accel_data = quat.Vector(
                     _log_scale(datagram['AX']),
                     _log_scale(datagram['AY']),
@@ -433,13 +485,16 @@ class IMUDisplay:
         quat = "{:>5.2f}, {:>5.2f}, {:>5.2f}, {:>5.2f}"\
                 .format(md['QW'], md['QX'], md['QY'], md['QZ'])
         data_row = "{:>6.2f}, {:>6.2f}, {:>6.2f}"
+        euler = data_row.format(md['EX'], md['EY'], md['EZ'])
         accel = data_row.format(md['AX'], md['AY'], md['AZ'])
         gyro = data_row.format(md['GX'], md['GY'], md['GZ'])
         mag = data_row.format(md['MX'], md['MY'], md['MZ'])
         battery = "{:.2f}".format(md['Battery'])
         seq = md['seqnum']
-        self._text = self._format_text.format(quat, accel, gyro,
-                                        mag, battery, seq)
+        speed = data_row.format(md['VX'], md['VY'], md['VZ'])
+        position = data_row.format(md['X'], md['Y'], md['Z'])
+        self._text = self._format_text.format(quat, euler, accel, gyro,
+                                        mag, speed, position, battery, seq)
         return self._text
 
 # TESTING FUNCTIONS BELOW
@@ -501,6 +556,7 @@ def _viewMugicDevice(mugic_device):
     pygame.display.flip()
     # variables
     last_datagram = list()
+    fps_value = 0
     # main loop
     while True:
         event = pygame.event.poll()
@@ -523,6 +579,10 @@ def _viewMugicDevice(mugic_device):
             mugic_display.rotateImageX(-rot_amount)
         elif state[pygame.K_s]:
             mugic_display.rotateImageX(rot_amount)
+        if state[pygame.K_q]:
+            mugic_display.rotateImageZ(-rot_amount)
+        elif state[pygame.K_e]:
+            mugic_display.rotateImageZ(rot_amount)
         elif state[pygame.K_z]:
             mugic_display.zoomImage(0.1)
         elif state[pygame.K_x]:
@@ -534,7 +594,7 @@ def _viewMugicDevice(mugic_device):
 
         next_datagram = mugic_device.peekDatagram(raw=True)
         if next_datagram is not None and next_datagram.values() != last_datagram:
-            last_datagram = next_datagram.values()
+            last_datagram = list(next_datagram.values())
             frames += 1
             mugic_device.dirty = True
             fps_value = ((frames*1000)/(pygame.time.get_ticks()-ticks))
