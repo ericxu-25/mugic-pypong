@@ -509,14 +509,14 @@ class Screen:
         self._width = w - padding[0] - padding[1]
         self._height = h - padding[2] - padding[3]
         self._scale = 1
-        self.base_background = pygame.Surface((w, h))
-        self.base_background.fill(Color.green)
+        self._base_background = pygame.Surface((w, h))
+        self._base_background.fill(Color.green)
         game_space = pygame.Rect((padding[0], padding[1]),
                                  (self._width, self._height))
-        pygame.draw.rect(self.base_background,
+        pygame.draw.rect(self._base_background,
                          Color.black,
                          game_space)
-        self.background = self.base_background
+        self.background = self._base_background
         self._screen = pygame.Surface((self.width, self.height))
         self._redraw()
 
@@ -527,6 +527,18 @@ class Screen:
     @screen.setter
     def screen(self, new_screen):
         self.setScreen(new_screen)
+
+    @property
+    def base_background(self):
+        return self._base_background
+
+    @base_background.setter
+    def base_background(self, new_bg):
+        self._base_background = new_bg
+
+    def _refresh_background(self):
+        self.background = pygame.transform.scale(
+                self._base_background, (self.width, self.height))
 
     @property
     def scale(self):
@@ -632,8 +644,7 @@ class Screen:
 
     def _resize(self, scale):
         self._scale = scale
-        self.background = pygame.transform.scale(
-                self.base_background, (self.width, self.height))
+        self._refresh_background()
         for sprite in self.sprites:
             sprite._update_image()
         self.refresh()
@@ -656,6 +667,9 @@ class Screen:
         self._resize(scale)
 
     # functions to override
+    def _handle_events(self):
+        return
+
     def _handle_key(self, event):
         return
 
@@ -721,7 +735,7 @@ class DisplayScreen(WindowScreen):
 
     def getTab(self, tab_num) -> pygame.Surface:
         if len(self.tabs) == 0: return None
-        if tab_num <= 0: return None
+        if tab_num < 0: return None
         if len(self.tabs) <= tab_num: return None
         return self.tabs[tab_num]
 
@@ -771,7 +785,7 @@ class DisplayScreen(WindowScreen):
         if type(text) is str:
             text_sprite = TextSprite(self)
             text_sprite.setFormatString("{}").setText(text)
-            text_sprite.moveTo(tab.centerx, tab.centery)
+            text_sprite.moveTo(offset[0], offset[1])
             text = text_sprite
         if isinstance(text, TextSprite):
             tab._add_sprite(text)
@@ -858,6 +872,8 @@ class Window:
         self._resize_window(w, h)
 
     def _handle_events(self):
+        for screen in self.focused_screens:
+            screen._handle_events()
         for event in pygame.event.get():
             self._handle_event(event)
             for screen in self.focused_screens:

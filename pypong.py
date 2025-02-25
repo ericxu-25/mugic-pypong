@@ -1,5 +1,5 @@
 from mugic_pygame_helpers import *
-# import mugic_helper
+from mugic_helper import *
 
 # Basic controls (keyboard)
 # - up, left, down, right, rotleft, rotright
@@ -639,10 +639,123 @@ class PongGame(Game):
         else:
             self.menu_title_text.hide()
 
+    def pause(self):
+        super().pause()
+        self._handle_pause()
+
+
+# PONG GAME but with Mugic Controls
+class MugicPongGame(PongGame):
+    def __init__(self, w, h):
+        super().__init__(w, h)
+        self.mugic_player_1 = MugicDevice(port=4000)
+        self.mugic_player_2 = MugicDevice(port=4001)
+        self._init_mugic_variables()
+        self._init_mugic_image()
+        self._init_mugic_text()
+
+    def _init_mugic_variables(self):
+        self._calibrate_p1_in_next_frames = -1
+        self._calibrate_p2_in_next_frames = -1
+        self._frame_count = 0
+
+    def _handle_mugic_controls(self):
+        if self.mugic_player_1.connected():
+            m1 = self.mugic_player_1
+            if m1.movingUp():
+                self.p2_up = True
+            elif m1.movingDown():
+                self.p2_dn = True
+            if m1.rotatingRight():
+                self.p2_rt = True
+            elif m1.rotatingLeft():
+                self.p2_lt = True
+
+            # on jolt - calibrate
+            if m1.jolted(50):
+                print("jolted - calibrating!")
+                self._calibrate_p1_in_next_frames = 60
+            if self._calibrate_p1_in_next_frames == 0:
+                print("calibrating...")
+                m1.calibrate()
+                self._calibrate_p1_in_next_frames = -1
+            elif self._calibrate_p1_in_next_frames > 0:
+                self._calibrate_p1_in_next_frames -= 1
+        if self.mugic_player_2.connected():
+            #TODO
+            return
+
+    def _handle_events(self):
+        if self._frame_count % 3 == 0:
+            self._handle_mugic_controls()
+        super()._handle_events()
+
+    def _init_mugic_image(self):
+        self.p1_mugic_display = IMUDisplay(self.mugic_player_1)
+        self.p2_mugic_display = IMUDisplay(self.mugic_player_2)
+        self.p1_mugic_display.rotateImageY(-pi/4)
+        self.p1_mugic_display.rotateImageX(pi/4)
+        self.p1_mugic_display.rotateImageZ(pi/4)
+        self.p2_mugic_display.rotateImageY(-pi/4)
+        self.p2_mugic_display.rotateImageX(pi/4)
+        self.p2_mugic_display.rotateImageZ(-pi/4)
+        p1_tab1 = self.debug_screen_left.getTab(0)
+        p1_tab1.base_background.fill(Color.black)
+        p2_tab1 = self.debug_screen_right.getTab(0)
+        p2_tab1.base_background.fill(Color.black)
+        p1_tab1._refresh_background()
+        p2_tab1._refresh_background()
+
+    def _insert_mugic_image(self):
+        p1_tab1 = self.debug_screen_left.getTab(0)
+        mugic_p1_image = self.p1_mugic_display.getImage(p1_tab1.width, p1_tab1.height)
+        p1_tab1.background.fill(Color.black)
+        p1_tab1.background.blit(mugic_p1_image, (0, 0))
+        p2_tab1 = self.debug_screen_right.getTab(0)
+        mugic_p2_image = self.p2_mugic_display.getImage(p2_tab1.width, p2_tab1.height)
+        p2_tab1.background.fill(Color.black)
+        p2_tab1.background.blit(mugic_p2_image, (0, 0))
+        p1_tab1.refresh()
+        p2_tab1.refresh()
+
+    def _init_mugic_text(self):
+        self.p1_mugic_text = self.debug_screen_left.writeNewText("NO CONNECTION", tab=2)
+        self.p2_mugic_text = self.debug_screen_right.writeNewText("NO CONNECTION", tab=2)
+        p1_txt, p2_txt = self.p1_mugic_text, self.p2_mugic_text
+        p1_txt.move(5, 10)
+        p2_txt.move(5, 10)
+        p1_txt.setFontSize(11)
+        p2_txt.setFontSize(11)
+
+    def _insert_mugic_text(self):
+        p1_txt, p2_txt = self.p1_mugic_text, self.p2_mugic_text
+        p1_txt.setText(self.p1_mugic_display.getText())
+        p2_txt.setText(self.p2_mugic_display.getText())
+        return
+
+    # override so pause only pauses the game sprites
+    def _tick(self):
+        if self._pause:
+            self._update()
+            return
+        super()._tick()
+
+    def start(self):
+        self.pause()
+        super().start()
+
+    def _update(self):
+        # drawing is expensive, so we only do them every few frames
+        if self._frame_count % 10 == 0:
+            self._insert_mugic_image()
+        self._insert_mugic_text()
+        self._frame_count += 1
+        super()._update()
+
 # MAIN
 def main():
     pygame.init()
-    PONG = PongGame(WIDTH, HEIGHT)
+    PONG = MugicPongGame(WIDTH, HEIGHT)
     PONG.start()
     pygame.quit()
 
