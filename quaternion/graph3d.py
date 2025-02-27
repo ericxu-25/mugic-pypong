@@ -229,8 +229,13 @@ class Camera:
     def __delitem__(self, key):
         del self.d[key]
 
-    def show(self, surface):
+    def show(self, surface, *shapes):
         dz = self.distance
+        if shapes:
+            for shape in [self[shape] for shape in shapes]:
+                s = shape.camera(self.crot, dz)
+                s.show(surface)
+            return
         for shape in self.d.values():
             s = shape.camera(self.crot, dz)
             s.show(surface)

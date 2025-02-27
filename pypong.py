@@ -719,7 +719,8 @@ class MugicPongGame(PongGame):
         p2_tab1.refresh()
 
     def _init_mugic_text(self):
-        self.p1_mugic_text = self.debug_screen_left.writeNewText("NO CONNECTION", tab=2)
+        instruction_text = "Strikers: WASD or Arrow keys\n P to pause \n R to reset"
+        self.p1_mugic_text = self.debug_screen_left.writeNewText(instruction_text, tab=2)
         self.p2_mugic_text = self.debug_screen_right.writeNewText("NO CONNECTION", tab=2)
         p1_txt, p2_txt = self.p1_mugic_text, self.p2_mugic_text
         p1_txt.move(5, 10)
@@ -729,8 +730,10 @@ class MugicPongGame(PongGame):
 
     def _insert_mugic_text(self):
         p1_txt, p2_txt = self.p1_mugic_text, self.p2_mugic_text
-        p1_txt.setText(self.p1_mugic_display.getText())
-        p2_txt.setText(self.p2_mugic_display.getText())
+        if self.mugic_player_1.connected():
+            p1_txt.setText(self.p1_mugic_display.text)
+        if self.mugic_player_2.connected():
+            p2_txt.setText(self.p2_mugic_display.text)
         return
 
     # override so pause only pauses the game sprites

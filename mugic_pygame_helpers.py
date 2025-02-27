@@ -535,6 +535,7 @@ class Screen:
     @base_background.setter
     def base_background(self, new_bg):
         self._base_background = new_bg
+        self._refresh_background()
 
     def _refresh_background(self):
         self.background = pygame.transform.scale(
