@@ -98,7 +98,6 @@ class Sprite(pygame.sprite.DirtySprite):
         self.name = f"Sprite {self.sprite_id}"
         self._debug = False
         self._debug_screen = None
-        return self
 
     @property
     def scale(self):
@@ -158,9 +157,9 @@ class Sprite(pygame.sprite.DirtySprite):
         self.rect.y = (self._y + top_padding) * scale
         self._redraw()
 
-    def move(self, x, y):
-        self._x += x
-        self._y += y
+    def move(self, dx=0, dy=0):
+        self._x += dx
+        self._y += dy
         self._update_position()
         return self
 
@@ -192,6 +191,28 @@ class Sprite(pygame.sprite.DirtySprite):
     def _cy(self, y):
         self._y = y - self._height // 2
         self._update_position()
+
+    @property
+    def x(self): return self._x
+
+    @x.setter
+    def x(self, x):
+        self._x = x
+        self._update_position()
+
+    @property
+    def y(self): return self._y
+
+    @y.setter
+    def y(self, y):
+        self._y = y
+        self._update_position()
+
+    @property
+    def height(self): return self._height
+
+    @property
+    def width(self): return self._width
 
     @property
     def colorkey(self):
@@ -607,6 +628,11 @@ class Screen:
     def position(self):
         return (self._position[0] * self._scale,
                 self._position[1] * self._scale)
+
+    @property
+    def screen_rect(self):
+        return pygame.Rect((self._padding[0], self._padding[2]),
+                           (self._width, self._height))
 
     @property
     def base_rect(self):

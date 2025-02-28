@@ -243,6 +243,11 @@ class Quaternion:
 def Vector(x, y, z):
     return Quaternion(0, x, y, z)
 
+UNITVECTORX = Vector(1, 0, 0)
+UNITVECTORY = Vector(0, 1, 0)
+UNITVECTORZ = Vector(0, 0, 1)
+UNITVECTORS = (UNITVECTORX, UNITVECTORY, UNITVECTORZ)
+
 Point = Vector
 
 # A rotation quaternion is a unit quaternion i.e. magnitude == 1

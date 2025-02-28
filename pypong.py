@@ -509,12 +509,47 @@ class PongGame(Game):
         self.s2_score = 0
         self._update_score()
 
-        # setup menu text
+        # setup menu sprites
         self.menu_title_text = TextSprite(self)
+        self.menu_title_text.layer = 4
         self._add_sprite(self.menu_title_text)
         self.menu_title_text.hide()
-        self.menu_title_text.setFontSize(100)
+        self.menu_title_text.setFontSize(80)
+        self.menu_title_text.setFormatString("{}")
         self.menu_title_text.bold = True
+        self.menu_subtitle_text = TextSprite(self)
+        self.menu_subtitle_text.layer = 4
+        self._add_sprite(self.menu_subtitle_text)
+        self.menu_subtitle_text.hide()
+        self.menu_subtitle_text.setFontSize(30)
+        self.menu_subtitle_text.setFormatString("{}")
+        self.menu_subtitle_text.italic = True
+        self.menu_background_sprite = Sprite(self)
+        self.menu_background_sprite.layer = 3
+        self._add_sprite(self.menu_background_sprite)
+        self.menu_background_sprite.moveTo(0, 0)
+        menu_background = pygame.Surface(self.screen_rect.size)
+        menu_background.fill(Color.red)
+        self.menu_background_sprite.setImage(menu_background)
+        self.menu_background_sprite.hide()
+
+    def _update_menu_text_position(self):
+        middle = self._height // 4
+        center = self._width // 2
+        self.menu_title_text.moveCenterTo(center, middle)
+        self.menu_subtitle_text.moveCenterTo(center, middle)
+        self.menu_subtitle_text.y = (self.menu_title_text.y
+                                     + self.menu_title_text.height + 10)
+
+    def _draw_menu_screen(self, title_text, subtitle_text, background=False):
+        self.menu_title_text.setText(title_text)
+        self.menu_subtitle_text.setText(subtitle_text)
+        self.menu_title_text.show()
+        self.menu_subtitle_text.show()
+        self._update_menu_text_position()
+        if background:
+            self.menu_background_sprite.show()
+        self._draw_sprites()
 
     def _update_score(self):
         self.s1_score_text.setText(self.s1_score)
@@ -545,7 +580,6 @@ class PongGame(Game):
                                         top_middle)
         self.s2_score_text.moveCenterTo(center_right,
                                         top_middle)
-        self.menu_title_text.moveCenterTo(center, middle)
         self._update_score()
 
     def _restart(self):
@@ -629,15 +663,13 @@ class PongGame(Game):
 
     def _handle_pause(self):
         if self._pause:
-            middle = self._height // 2
-            center = self._width // 2
-            self.menu_title_text.setText("PAUSED")
-            self.menu_title_text.setFormatString("{}")
-            self.menu_title_text.moveCenterTo(center, middle)
-            self.menu_title_text.show()
-            self._draw_sprites()
+            title_text = "PAUSED"
+            subtitle_text = "Press P to continue"
+            self._draw_menu_screen(title_text, subtitle_text, background=False)
         else:
             self.menu_title_text.hide()
+            self.menu_subtitle_text.hide()
+            self.menu_background_sprite.hide()
 
     def pause(self):
         super().pause()
@@ -653,6 +685,7 @@ class MugicPongGame(PongGame):
         self._init_mugic_variables()
         self._init_mugic_image()
         self._init_mugic_text()
+        self._current_screen = 0
 
     def _init_mugic_variables(self):
         self._calibrate_p1_in_next_frames = -1
@@ -662,27 +695,16 @@ class MugicPongGame(PongGame):
     def _handle_mugic_controls(self):
         if self.mugic_player_1.connected():
             m1 = self.mugic_player_1
-            if m1.movingUp():
-                self.p2_up = True
-            elif m1.movingDown():
-                self.p2_dn = True
-            if m1.rotatingRight():
-                self.p2_rt = True
-            elif m1.rotatingLeft():
-                self.p2_lt = True
-
-            # on jolt - calibrate
-            if m1.jolted(50):
-                print("jolted - calibrating!")
-                self._calibrate_p1_in_next_frames = 60
-            if self._calibrate_p1_in_next_frames == 0:
-                print("calibrating...")
-                m1.calibrate()
-                self._calibrate_p1_in_next_frames = -1
-            elif self._calibrate_p1_in_next_frames > 0:
-                self._calibrate_p1_in_next_frames -= 1
+            self.p1_rt = m1.yawingRight()
+            self.p1_lt = m1.yawingLeft()
+            self.p1_up = m1.pitchingUp()
+            self.p1_dn = m1.pitchingDown()
         if self.mugic_player_2.connected():
-            #TODO
+            m2 = self.mugic_player_2
+            self.p2_rt = m2.yawingRight()
+            self.p2_lt = m2.yawingLeft()
+            self.p2_up = m2.pitchingUp()
+            self.p2_dn = m2.pitchingDown()
             return
 
     def _handle_events(self):
@@ -693,25 +715,21 @@ class MugicPongGame(PongGame):
     def _init_mugic_image(self):
         self.p1_mugic_display = IMUDisplay(self.mugic_player_1)
         self.p2_mugic_display = IMUDisplay(self.mugic_player_2)
-        self.p1_mugic_display.rotateImageY(-pi/4)
-        self.p1_mugic_display.rotateImageX(pi/4)
-        self.p1_mugic_display.rotateImageZ(pi/4)
-        self.p2_mugic_display.rotateImageY(-pi/4)
-        self.p2_mugic_display.rotateImageX(pi/4)
-        self.p2_mugic_display.rotateImageZ(-pi/4)
+        self.p2_mugic_display.rotateImageZ(pi/4)
         p1_tab1 = self.debug_screen_left.getTab(0)
         p1_tab1.base_background.fill(Color.black)
         p2_tab1 = self.debug_screen_right.getTab(0)
         p2_tab1.base_background.fill(Color.black)
         p1_tab1._refresh_background()
         p2_tab1._refresh_background()
+        self.p2_mugic_display.rotateImageZ(pi/2)
 
     def _insert_mugic_image(self):
-        p1_tab1 = self.debug_screen_left.getTab(0)
+        p1_tab1 = self.debug_screen_right.getTab(0)
         mugic_p1_image = self.p1_mugic_display.getImage(p1_tab1.width, p1_tab1.height)
         p1_tab1.background.fill(Color.black)
         p1_tab1.background.blit(mugic_p1_image, (0, 0))
-        p2_tab1 = self.debug_screen_right.getTab(0)
+        p2_tab1 = self.debug_screen_left.getTab(0)
         mugic_p2_image = self.p2_mugic_display.getImage(p2_tab1.width, p2_tab1.height)
         p2_tab1.background.fill(Color.black)
         p2_tab1.background.blit(mugic_p2_image, (0, 0))
@@ -719,32 +737,76 @@ class MugicPongGame(PongGame):
         p2_tab1.refresh()
 
     def _init_mugic_text(self):
-        instruction_text = "Strikers: WASD or Arrow keys\n P to pause \n R to reset"
-        self.p1_mugic_text = self.debug_screen_left.writeNewText(instruction_text, tab=2)
-        self.p2_mugic_text = self.debug_screen_right.writeNewText("NO CONNECTION", tab=2)
+        instruction_text = "Instructions: H \n P to pause \n R to reset"
+        self.p1_mugic_text = self.debug_screen_right.writeNewText("NO CONNECTION", tab=2)
+        self.p2_mugic_text = self.debug_screen_left.writeNewText(instruction_text, tab=2)
         p1_txt, p2_txt = self.p1_mugic_text, self.p2_mugic_text
-        p1_txt.move(5, 10)
-        p2_txt.move(5, 10)
-        p1_txt.setFontSize(11)
-        p2_txt.setFontSize(11)
+        p1_txt.move(5, 2)
+        p2_txt.move(5, 2)
+        p1_txt.setFontSize(20)
+        p2_txt.setFontSize(30)
 
     def _insert_mugic_text(self):
         p1_txt, p2_txt = self.p1_mugic_text, self.p2_mugic_text
+        if p1_txt._fontsize > 11:
+            p1_txt.setFontSize(11)
+            p2_txt.setFontSize(11)
         if self.mugic_player_1.connected():
             p1_txt.setText(self.p1_mugic_display.text)
         if self.mugic_player_2.connected():
             p2_txt.setText(self.p2_mugic_display.text)
         return
 
-    # override so pause only pauses the game sprites
+    # additional keyboard controls
+    def _handle_key(self, event):
+        super()._handle_key(event)
+        key = Key(event)
+        # space to calibrate both
+        if key in (pygame.K_SPACE, ):
+            self.mugic_player_1.calibrate()
+            self.mugic_player_2.calibrate()
+        if key in (pygame.K_h, pygame.K_m) and key.down:
+            if self._current_screen == 1:
+                self._title_screen()
+            else:
+                self._instruction_screen()
+
+    # override so pause only pauses the game sprites - can still see Mugic info
     def _tick(self):
         if self._pause:
             self._update()
             return
         super()._tick()
 
-    def start(self):
+    def _title_screen(self):
         self.pause()
+        self._current_screen = 0
+        title_text = "MUGICAL PONG"
+        subtitle_text = "press P to start, H for instructions"
+        self._draw_menu_screen(title_text, subtitle_text, background=True)
+
+    def _instruction_screen(self):
+        self.pause()
+        self._current_screen = 1
+        title_text = "INSTRUCTIONS"
+        instruction_text = \
+"""Keyboard Controls:
+* right side - arrow keys,. or ijkluo
+* left side - wasdqe
+
+Mugic Controls:
+* spacebar to calibrate
+* point up/down to move striker
+* point right/left to rotate striker
+
+- Press P to pause, R to reset
+- Press M to return to Menu
+"""
+        self._draw_menu_screen(title_text, instruction_text, background=True)
+
+    def start(self):
+        # when starting the game, show the title screen
+        self._title_screen()
         super().start()
 
     def _update(self):
