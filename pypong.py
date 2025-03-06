@@ -685,7 +685,6 @@ class MugicPongGame(PongGame):
         self._init_mugic_variables()
         self._init_mugic_image()
         self._init_mugic_text()
-        self._current_screen = 0
 
     def _init_mugic_variables(self):
         self._calibrate_p1_in_next_frames = -1
@@ -715,14 +714,12 @@ class MugicPongGame(PongGame):
     def _init_mugic_image(self):
         self.p1_mugic_display = IMUDisplay(self.mugic_player_1)
         self.p2_mugic_display = IMUDisplay(self.mugic_player_2)
-        self.p2_mugic_display.rotateImageZ(pi/4)
         p1_tab1 = self.debug_screen_left.getTab(0)
         p1_tab1.base_background.fill(Color.black)
         p2_tab1 = self.debug_screen_right.getTab(0)
         p2_tab1.base_background.fill(Color.black)
         p1_tab1._refresh_background()
         p2_tab1._refresh_background()
-        self.p2_mugic_display.rotateImageZ(pi/2)
 
     def _insert_mugic_image(self):
         p1_tab1 = self.debug_screen_right.getTab(0)
@@ -765,11 +762,17 @@ class MugicPongGame(PongGame):
         if key in (pygame.K_SPACE, ):
             self.mugic_player_1.calibrate()
             self.mugic_player_2.calibrate()
-        if key in (pygame.K_h, pygame.K_m) and key.down:
-            if self._current_screen == 1:
-                self._title_screen()
-            else:
-                self._instruction_screen()
+        # h to open instruction screen
+        if key in (pygame.K_h,) and key.down:
+           self._title_screen()
+        # m to open title screen
+        if key in (pygame.K_m, ) and key.down:
+            self._instruction_screen()
+        # 1,2 to toggle legacy on left and right player (if using mugic 1.0)
+        if key in (pygame.K_1, ) and key.down:
+            self.mugic_player_2.toggleLegacy()
+        if key in (pygame.K_2, ) and key.down:
+            self.mugic_player_1.toggleLegacy()
 
     # override so pause only pauses the game sprites - can still see Mugic info
     def _tick(self):
@@ -780,14 +783,12 @@ class MugicPongGame(PongGame):
 
     def _title_screen(self):
         self.pause()
-        self._current_screen = 0
         title_text = "MUGICAL PONG"
         subtitle_text = "press P to start, H for instructions"
         self._draw_menu_screen(title_text, subtitle_text, background=True)
 
     def _instruction_screen(self):
         self.pause()
-        self._current_screen = 1
         title_text = "INSTRUCTIONS"
         instruction_text = \
 """Keyboard Controls:
@@ -795,7 +796,7 @@ class MugicPongGame(PongGame):
 * left side - wasdqe
 
 Mugic Controls:
-* spacebar to calibrate
+* spacebar to calibrate; 1 or 2 to switch to Mugic 1.0
 * point up/down to move striker
 * point right/left to rotate striker
 

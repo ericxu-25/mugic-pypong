@@ -113,6 +113,17 @@ class Axes(Shape):
              Line(Point(0, 0, -1.0), Point(0, 0, 1.0), zcolor, width))
         super().__init__(l)
 
+class PositiveAxes(Shape):
+    def __init__(self, xcolor, ycolor=None, zcolor=None, width=1):
+        if ycolor == None: ycolor = xcolor
+        if zcolor == None: zcolor = xclolor
+        l = (Line(Point(0, 0, 0), Point(1.0, 0, 0), xcolor, width),
+             Line(Point(0, 0, 0), Point(0, 1.0, 0), ycolor, width),
+             Line(Point(0, 0, 0), Point(0, 0, 1.0), zcolor, width))
+        super().__init__(l)
+
+
+
 class Axis(Shape):
     def __init__(self, color, p0=(0, 0, 0), p1=(1, 0, 0), width=1):
         l = (Line(Point(*p0), Point(*p1), color, width),)

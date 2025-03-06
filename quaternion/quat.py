@@ -70,6 +70,10 @@ class Quaternion:
     def z(self):
         return self[3]
 
+    @property
+    def xyz(self):
+        return (self[0], self[1], self[2])
+
     @z.setter
     def z(self, v):
         self[3] = v

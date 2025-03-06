@@ -30,6 +30,10 @@ def _log_scale(number):
     sign = -1 if number < 0 else 1
     return (math.log(abs(number)+1)/3.0) * sign
 
+def normalise_point(point):
+    magnitude = math.sqrt(sum([p**2 for p in point]))
+    return tuple([p/magnitude for p in point])
+
 # Base Classes
 
 # interface for a generic IMU device
@@ -44,12 +48,11 @@ class IMU:
         'MX', 'MY', 'MZ', # Magnetometer
         'QW', 'QX', 'QY', 'QZ', # Quaternion angles
         'VX', 'VY', 'VZ', # Velocity
-        'X', 'Y', 'Z',    # Position
     )
     buffer_limit = 30
-    # direction the IMU faces
+    # direction the IMU faces - for IMUDisplay
     orientation = (1, 0, 0)
-    # the dimensions of the IMU
+    # the dimensions of the IMU - for IMUDisplay
     dimensions = (1, 1, 1)
 
     def __init__(self, buffer_size=10):
@@ -207,11 +210,6 @@ class IMU:
         if datagram is None: return None
         return [datagram['VX'], datagram['VY'], datagram['VZ']]
 
-    @staticmethod
-    def position(datagram):
-        if datagram is None: return None
-        return [datagram['X'], datagram['Y'], datagram['Z']]
-
 # IMUController interface
 # Methods:
 # * next() -> get next datagram, None if disconnected
@@ -227,7 +225,6 @@ class IMUController(IMU):
         self._state = None
         self.low_pass = [0.15] * 3
         self._speed = array('d', [0, 0, 0])
-        self._position = array('d', [0, 0, 0])
 
     def _parse_datagram(self, *values):
         values = [t(v) for t, v in zip(self.types, values)]
@@ -283,9 +280,7 @@ class IMUController(IMU):
                 if abs(accel[i]) > self.low_pass[i]:
                     self._speed[i] += accel[i] * delta_t
                 else: self._speed[i] /= 1.2
-                self._position[i] += self._speed[i] * delta_t
         datagram['VX'], datagram['VY'], datagram['VZ'] = self._speed
-        datagram['X'], datagram['Y'], datagram['Z'] = self._position
         self._state = datagram
         self._time_stamp = now
         return datagram
@@ -321,7 +316,7 @@ class IMUController(IMU):
             return True
         return False
 
-    def _rotating(self, axis, direction=1, threshold=40, datagram=None):
+    def _rotating(self, axis, direction=1, threshold=80, datagram=None):
         if datagram is None: datagram = self.next()
         if datagram is None: return False
         axis = 'GX' if axis == 0 else 'GY' if axis == 1 else 'GZ'
@@ -329,7 +324,7 @@ class IMUController(IMU):
             return True
         return False
 
-    # using euler angles leads to gimbal lock problems (EX flips around!)
+    # using euler angles leads to gimbal lock problems...
     def _facing(self, axis, direction, threshold=45, datagram=None):
         if datagram is None:
             datagram = self.next()
@@ -337,17 +332,32 @@ class IMUController(IMU):
         if datagram is None: return False
         axis = 'EX' if axis == 0 else 'EY' if axis == 1 else 'EZ'
         angle = (int(datagram[axis]) + 360) % 360
+        # angle = quat.euler(IMU.to_quaternion(datagram))[axis] * 180
         left  = (direction + 360 - threshold) % 360
         right = (direction + threshold) % 360
         if left > right:
             return left <= angle or angle <= right
         return angle >= left and angle <= right
 
-    # converts the IMU's quaternion orientation to a vector along an axis
+    # converts the IMU's quaternion orientation to what point it is facing
     def _quat_facing(self, datagram):
         data_quat = IMU.to_quaternion(datagram).normalise()
-        unit_vector = quat.Vector(*orientation) @ data_quat
-        return unit_vector
+        unit_vector = quat.Vector(*self.orientation) @ data_quat
+        return unit_vector.xyz
+
+    # alternative approach to facing using quaternions
+    def _pointing(self, point, threshold=0.70, datagram=None, pointing_at=None):
+        if pointing_at is None and datagram is None:
+            datagram = self.next()
+        if pointing_at is None:
+            pointing_at = self._quat_facing(datagram)
+        return self._pointing_at(point, pointing_at, threshold)
+
+    # simple distance function based check
+    def _pointing_at(self, p0, p1, threshold):
+        distance = math.sqrt(sum([(v1-v2)**2 for v1,v2 in zip(p0,p1)]))
+        if distance > threshold: return False
+        return True
 
     # interface methods
     def movingUp(self, **kwargs): return self._moving(1, 1, **kwargs)
@@ -361,7 +371,7 @@ class IMUController(IMU):
     def rotatingLeft(self, **kwargs): return self._rotating(0, -1, **kwargs)
     def rotatingUp(self, **kwargs): return self._rotating(1, 1, **kwargs)
     def rotatingDown(self, **kwargs): return self._rotating(1, -1, **kwargs)
-    def twistingRight(self, **kwargs): return self._rotating(2, -1, **kwargs)
+    def twistingRight(self, **kwargs): return self._rotating(2, 1, **kwargs)
     def twistingLeft(self, **kwargs): return self._rotating(2, -1, **kwargs)
 
     # y axis facings
@@ -381,6 +391,14 @@ class IMUController(IMU):
     def rollingLeft(self, **kwargs): return self._facing(2, -90, **kwargs)
     def rollingUp(self, **kwargs): return self._facing(2, 0, **kwargs) # upside up
     def rollingDown(self, **kwargs): return self._facing(2, 180, **kwargs) # upside down
+
+    # 6 points
+    def pointingForward(self, **kwargs): return self._pointing((1, 0, 0), **kwargs)
+    def pointingBackward(self, **kwargs): return self._pointing((-1, 0, 0), **kwargs)
+    def pointingUp(self, **kwargs): return self._pointing((0, 1, 0), **kwargs)
+    def pointingDown(self, **kwargs): return self._pointing((0, -1, 0), **kwargs)
+    def pointingRight(self, **kwargs): return self._pointing((0, 0, 1), **kwargs)
+    def pointingLeft(self, **kwargs): return self._pointing((0, 0, -1), **kwargs)
 
     def jolted(self, threshold=10):
         datagram = self.next()
@@ -481,6 +499,33 @@ class IMUController(IMU):
         if facing_bits & (1<<3): text.append("BW")
         return text
 
+    # returns which quadrant is being pointed at
+    def pointing(self, text=False, **kwargs):
+        if "datagram" not in kwargs: kwargs["datagram"] = self.next()
+        pointing_at = normalise_point(self._quat_facing(kwargs["datagram"]))
+        if "pointing_at" not in kwargs: kwargs["pointing_at"] = pointing_at
+        pointing_bits = 0
+        if self.pointingUp(**kwargs): pointing_bits += 0b1
+        if self.pointingDown(**kwargs): pointing_bits += 0b10
+        if self.pointingRight(**kwargs): pointing_bits += 0b100
+        if self.pointingLeft(**kwargs): pointing_bits += 0b1000
+        if self.pointingForward(**kwargs): pointing_bits += 0b10000
+        if self.pointingBackward(**kwargs): pointing_bits += 0b100000
+        if text:
+            return self._pointing_to_text(pointing_bits)
+        return pointing_bits
+
+    @staticmethod
+    def _pointing_to_text(pointing_bits):
+        text = list()
+        if pointing_bits & (1<<0): text.append("UP")
+        if pointing_bits & (1<<1): text.append("DN")
+        if pointing_bits & (1<<2): text.append("RT")
+        if pointing_bits & (1<<3): text.append("LT")
+        if pointing_bits & (1<<4): text.append("FW")
+        if pointing_bits & (1<<5): text.append("BW")
+        return text
+
 class MugicDevice(IMUController):
     # Datagram signature
     types = [float if t == 'f' else int for t in 'fffffffffffffffffiiiiififffffffff']
@@ -496,18 +541,31 @@ class MugicDevice(IMUController):
         'seconds', # since last reboot
         'seqnum', # messagesequence number
         'VX', 'VY', 'VZ', # Velocity (not provided by IMU)
-        'X', 'Y', 'Z',    # Position (not provided by IMU)
     )
-    dimensions = (0.8, 0.5, 0.2)
-    legacy_dimensions = (0.8, 0.5, 0.3)
+    orientation  = (0, 1, 0)
+    dimensions = (0.5, 0.8, 0.2)
+    mugic_1_dimensions = (0.5, 0.8, 0.4)
 
     def __init__(self, port=4000, buffer_size=10, legacy=False):
         super().__init__(buffer_size)
-        if legacy: # mugic 1.0
-            self.dimensions = self.legacy_dimensions
+        if legacy: # Mugic 1.0
+            self.dimensions = self.mugic_1_dimensions
+        self.legacy = legacy
         self.port = port
         self._mugic_init()
         return
+
+    def _update_state(self, datagram):
+        datagram = super()._update_state(datagram)
+        # Differences in Mugic 1.0 and Mugic 2.0
+        if not self.legacy: # Mugic 2.0
+            datagram['EZ'] = -datagram['EZ']
+            datagram['GX'], datagram['GZ'] = -datagram['GZ'], datagram['GX']
+        else:
+            datagram['EY'] = -datagram['EY']
+            datagram['GX'], datagram['GZ'] = datagram['GZ'], -datagram['GX']
+        datagram['GY'] = -datagram['GY']
+        return datagram
 
     def _mugic_init(self):
         # prepare for connection
@@ -525,17 +583,26 @@ class MugicDevice(IMUController):
         self._osc_server.stop_all()
         self._osc_server.terminate_server()
 
+    def toggleLegacy(self):
+        self.legacy = not self.legacy
+        # self._zero['GX'], self._zero['GZ'] = self._zero['GZ'], self._zero['GX']
+        if self.legacy:
+            self.dimensions = self.mugic_1_dimensions
+        else:
+            self.dimensions = self.__class__.dimensions
+
     def __del__(self):
         self.close()
         return
 
     def __str__(self):
+        mugic_str = "Mugic 1.0" if self.legacy else "Mugic 2.0"
         if not hasattr(self, '_osc_server'):
-            return f"Mugic Device @ nowhere"
+            return f"{mugic_str} Device @ nowhere"
         try:
-            return f"Mugic Device @ {self._socket.getsockname()}"
+            return f"{mugic_str} Device @ {self._socket.getsockname()}"
         except:
-            return f"Mugic Device @ {self.port}"
+            return f"{mugic_str} Device @ {self.port}"
 
     def _smooth(self, datagrams, raw=False):
         ret_val = super()._smooth(datagrams, raw)
@@ -693,19 +760,19 @@ class IMUDisplay:
         # objects to draw
         self._image_cube = graph3d.Cube(Color.magenta, Color.cyan, Color.orange)
         self._image_cube += (-0.5, -0.5, -0.5)
-        self._image_cube *= self._imu.dimensions
         self._image_accel = graph3d.Axis(Color.red, width = 2)
         self._image_gyro = graph3d.Axis(Color.blue, width = 2)
         self._image_magnet = graph3d.Axis(Color.white, width = 2) * (0.1, 0.1, 0.1)
         self._image_facing = graph3d.Axis(Color.magenta, width = 2, p1=self._imu.orientation)
-        self._image_axes = graph3d.Axes(Color.red, Color.green, Color.blue)
+        self._image_axes = graph3d.PositiveAxes(Color.red, Color.green, Color.blue)
         # camera initialization
         self._camera = graph3d.Camera()
-        self._camera.crot *= (quat.Rotator(pi/2, 1, 0, 0)
-                              * quat.Rotator(pi, 0, -1, 0)
-                              * quat.Rotator(-pi/2, 0, 0, 1)
-                              * quat.Rotator(-pi/4, 0, 1, 0)
-                              * quat.Rotator(-pi/4, 0, 0, 1))
+        # orient to the right direction
+        o = self._imu.orientation
+        self._camera.crot *= quat.Rotator(pi/2, o[1], o[2], o[0])
+        self._camera.crot *= quat.Rotator(pi/2, o[2], o[0], o[1])
+        # apply a slight tilt so you can see all the axes
+        self._camera.crot *= quat.Rotator(-pi/4, 1, 1, 1)
         self._camera["accel"] = self._image_accel
         self._camera["compass"] = self._image_magnet
         self._camera["gyro"] = self._image_gyro
@@ -757,7 +824,8 @@ class IMUDisplay:
             self._camera["accel"] = self._image_accel * accel_data
             self._camera["gyro"] = self._image_gyro * gyro_data
             self._camera["compass"] = self._image_magnet * magnet_data
-            self._camera["cube"] = self._image_cube @ data_quat # + speed_data
+            self._camera["cube"] = self._image_cube * self._imu.dimensions\
+                    @ data_quat # + speed_data
             self._camera["facing"] = self._image_facing @ data_quat
         self._camera.show(self._image)
         return self._image
@@ -765,10 +833,13 @@ class IMUDisplay:
     def _init_text(self):
         self._text = "No Connection"
         self._action_text = "No Connection"
-        data_labels= ["quaternion", "euler", "accel", "gyro", "magnetometer", "velocity", "position", "battery", "frame", "calib"]
+        data_labels= ["quaternion", "euler", "accel",
+                      "gyro", "magnetometer", "velocity",
+                      "battery/frame", "calib (SAGM)"]
         self._data_format_text = '\n'.join(
             [value+": {}" for value in data_labels])
-        self._action_format_text = "Moving: {}\nRotating: {}\nYaw {:6s} Pitch{:6s} Roll{:6s}"
+        self._action_format_text = "Moving: {}\nRotating: {}\n"
+        self._action_format_text += "Pointing: {:6s} Yaw {:6s} Pitch {:6s} Roll {:6s}"
 
     def getDataText(self):
         if not self._imu.dirty: return self._text
@@ -781,18 +852,14 @@ class IMUDisplay:
         accel = data_row.format(md['AX'], md['AY'], md['AZ'])
         gyro = data_row.format(md['GX'], md['GY'], md['GZ'])
         mag = data_row.format(md['MX'], md['MY'], md['MZ'])
-        battery = "{:.2f}".format(md['Battery'])
-        seq = md['seqnum']
+        battery_and_frame = "{:5.2f} - {}".format(md['Battery'], md['seqnum'])
         speed = data_row.format(md['VX'], md['VY'], md['VZ'])
-        position = data_row.format(md['X'], md['Y'], md['Z'])
-        calib_status = ", ".join([a +\
-                ("EWW" if b < 1.0 else "BAD" if b < 2.0 else "GUD" if b < 3.0 else "WOW")\
-                for a, b in zip(["S:", "A:", "G:", "M:"],
-                                [md[val] for val in
-                                 ['calib_sys', 'calib_accel', 'calib_gyro', 'calib_mag']])])
-        calib_status = "{"+calib_status+"}"
+        calib_status = " & ".join(
+                [":(" if md[c] < 1.0 else ":|" if md[c] < 2.0 else ":)" if md[c] < 3.0 else ":D"
+                for c in ['calib_sys', 'calib_accel', 'calib_gyro', 'calib_mag']])
         self._text = self._data_format_text.format(quat, euler, accel, gyro,
-                                        mag, speed, position, battery, seq, calib_status)
+                                        mag, speed, position, battery_and_frame, calib_status)
+        self._text = str(self._imu) + '\n' + self._text
         return self._text
 
     def getActionText(self):
@@ -804,8 +871,10 @@ class IMUDisplay:
         yawing = ", ".join(self._imu.yawing(text=True, datagram=datagram))
         pitching = ", ".join(self._imu.pitching(text=True, datagram=datagram))
         rolling = ", ".join(self._imu.rolling(text=True, datagram=datagram))
+        pointing = ", ".join(self._imu.pointing(text=True, datagram=datagram))
         self._action_text = self._action_format_text.format(moving, rotating,
-                                                            yawing, pitching, rolling)
+                                                            pointing, yawing,
+                                                            pitching, rolling)
         return self._action_text
 
 
@@ -893,6 +962,8 @@ def _viewMugicDevice(mugic_device):
                 mugic_data_text.toggleVisibility()
             elif event.key == pygame.K_g:
                 mugic_movement_text.toggleVisibility()
+            elif event.key == pygame.K_l:
+                mugic_device.toggleLegacy()
         state = pygame.key.get_pressed()
         rot_amount = pi/180
         if state[pygame.K_a]:
@@ -973,6 +1044,7 @@ def main():
     print("* use QEWASDZX to orient the view")
     print("* C to zero the values, R to reset orientation")
     print("* F to show raw values, G to show interpreted movements")
+    print("* L to switch between Mugic 1.0 and Mugic 2.0")
     _viewMugicDevice(mugic)
 
 
