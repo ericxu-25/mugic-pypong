@@ -47,7 +47,6 @@ class IMU:
         'GX', 'GY', 'GZ', # Gyrometer
         'MX', 'MY', 'MZ', # Magnetometer
         'QW', 'QX', 'QY', 'QZ', # Quaternion angles
-        'VX', 'VY', 'VZ', # Velocity
     )
     buffer_limit = 30
     # direction the IMU faces - for IMUDisplay
@@ -129,9 +128,8 @@ class IMU:
         self._zero['MZ'] = 0
 
     def _calibrate(self, datagram):
-        # TODO - verify correctness of zeroing the quaternion
-        calibrated_quat = (IMU.to_quaternion(datagram) *
-                           IMU.to_quaternion(self._zero).inverse()).normalise()
+        calibrated_quat = (IMU.to_quaternion(self._zero).inverse()
+                           * IMU.to_quaternion(datagram)).normalise()
         for key, value in self._zero.items():
             datagram[key] -= value
         datagram['QW'] = calibrated_quat.w
@@ -205,11 +203,6 @@ class IMU:
         if datagram is None: return None
         return [datagram['EX'], datagram['EY'], datagram['EZ']]
 
-    @staticmethod
-    def velocity(datagram):
-        if datagram is None: return None
-        return [datagram['VX'], datagram['VY'], datagram['VZ']]
-
 # IMUController interface
 # Methods:
 # * next() -> get next datagram, None if disconnected
@@ -224,7 +217,6 @@ class IMUController(IMU):
         self._next_datagram = None
         self._state = None
         self.low_pass = [0.15] * 3
-        self._speed = array('d', [0, 0, 0])
 
     def _parse_datagram(self, *values):
         values = [t(v) for t, v in zip(self.types, values)]
@@ -250,37 +242,11 @@ class IMUController(IMU):
             super().calibrate(**next_datagram)
         else:
             super().calibrate(*args, **kwargs)
-        # don't want to calibrate these values
-        self._zero['Battery'] = 0
-        self._zero['seqnum'] = 0
-        self._zero['seconds'] = 0
-        self._zero['calib_sys'] = 0
-        self._zero['calib_accel'] = 0
-        self._zero['calib_gyro'] = 0
-        self._zero['calib_mag'] = 0
-        self._zero['VX'] = 0
-        self._zero['VY'] = 0
-        self._zero['VZ'] = 0
-        self.low_pass = [self._zero['AX'], self._zero['AY'], self._zero['AZ']]
-        self.low_pass = [abs(val) * 3 for val in self.low_pass]
         self._dirty = True
-
-    # because we are using a single IMU, there is some drift, which makes
-    # accurately getting position a challenge. So position and speed really
-    # just return the details of big gestures and return to rest otherwise
 
     # appends additional state data to each datagram
     def _update_state(self, datagram):
         now = time.time()
-        if self._state is not None:
-            delta_t = now - self._time_stamp
-            # solve for the change in speed/rot - take halfway point to approximate
-            accel = [(self._state[v] + datagram[v])/2.0 for v in ('AX', 'AY', 'AZ')]
-            for i in range(3):
-                if abs(accel[i]) > self.low_pass[i]:
-                    self._speed[i] += accel[i] * delta_t
-                else: self._speed[i] /= 1.2
-        datagram['VX'], datagram['VY'], datagram['VZ'] = self._speed
         self._state = datagram
         self._time_stamp = now
         return datagram
@@ -311,7 +277,7 @@ class IMUController(IMU):
     def _moving(self, axis, direction=1, threshold=0.2, datagram=None):
         if datagram is None: datagram = self.next()
         if datagram is None: return False
-        axis = 'VX' if axis == 0 else 'VY' if axis == 1 else 'VZ'
+        axis = 'AX' if axis == 0 else 'AY' if axis == 1 else 'AZ'
         if datagram[axis] * direction > threshold:
             return True
         return False
@@ -356,8 +322,7 @@ class IMUController(IMU):
     # simple distance function based check
     def _pointing_at(self, p0, p1, threshold):
         distance = math.sqrt(sum([(v1-v2)**2 for v1,v2 in zip(p0,p1)]))
-        if distance > threshold: return False
-        return True
+        return distance < threshold
 
     # interface methods
     def movingUp(self, **kwargs): return self._moving(1, 1, **kwargs)
@@ -395,10 +360,10 @@ class IMUController(IMU):
     # 6 points
     def pointingForward(self, **kwargs): return self._pointing((1, 0, 0), **kwargs)
     def pointingBackward(self, **kwargs): return self._pointing((-1, 0, 0), **kwargs)
-    def pointingUp(self, **kwargs): return self._pointing((0, 1, 0), **kwargs)
-    def pointingDown(self, **kwargs): return self._pointing((0, -1, 0), **kwargs)
-    def pointingRight(self, **kwargs): return self._pointing((0, 0, 1), **kwargs)
-    def pointingLeft(self, **kwargs): return self._pointing((0, 0, -1), **kwargs)
+    def pointingUp(self, **kwargs): return self._pointing((0, 0, 1), **kwargs)
+    def pointingDown(self, **kwargs): return self._pointing((0, 0, -1), **kwargs)
+    def pointingRight(self, **kwargs): return self._pointing((0, -1, 0), **kwargs)
+    def pointingLeft(self, **kwargs): return self._pointing((0, 1, 0), **kwargs)
 
     def jolted(self, threshold=10):
         datagram = self.next()
@@ -540,16 +505,16 @@ class MugicDevice(IMUController):
         'calib_sys', 'calib_gyro', 'calib_accel', 'calib_mag', # Calibration state
         'seconds', # since last reboot
         'seqnum', # messagesequence number
-        'VX', 'VY', 'VZ', # Velocity (not provided by IMU)
     )
-    orientation  = (0, 1, 0)
-    dimensions = (0.5, 0.8, 0.2)
-    mugic_1_dimensions = (0.5, 0.8, 0.4)
+    orientation  = (1, 0, 0)
+    dimensions = (0.8, 0.5, 0.2)
+    mugic_1_dimensions = (0.8, 0.5, 0.4)
 
-    def __init__(self, port=4000, buffer_size=10, legacy=False):
+    def __init__(self, port=4000, buffer_size=10, legacy=None):
         super().__init__(buffer_size)
-        if legacy: # Mugic 1.0
+        if legacy == True: # Mugic 1.0
             self.dimensions = self.mugic_1_dimensions
+            self.legacy = True
         self.legacy = legacy
         self.port = port
         self._mugic_init()
@@ -557,11 +522,14 @@ class MugicDevice(IMUController):
 
     def _update_state(self, datagram):
         datagram = super()._update_state(datagram)
-        # Differences in Mugic 1.0 and Mugic 2.0
+        # Differences between Mugic 1.0 and Mugic 2.0
+        # also - we fit the values to a different frame of reference
         if not self.legacy: # Mugic 2.0
             datagram['EZ'] = -datagram['EZ']
             datagram['GX'], datagram['GZ'] = -datagram['GZ'], datagram['GX']
-        else:
+        else: # Mugic 1.0 - yaw is inverted
+            # ref: https://gamedev.stackexchange.com/questions/201977
+            datagram['QZ'], datagram['QX'] = -datagram['QZ'], -datagram['QX']
             datagram['EY'] = -datagram['EY']
             datagram['GX'], datagram['GZ'] = datagram['GZ'], -datagram['GX']
         datagram['GY'] = -datagram['GY']
@@ -584,12 +552,19 @@ class MugicDevice(IMUController):
         self._osc_server.terminate_server()
 
     def toggleLegacy(self):
-        self.legacy = not self.legacy
-        # self._zero['GX'], self._zero['GZ'] = self._zero['GZ'], self._zero['GX']
+        self.legacy = (bool) (not self.legacy)
         if self.legacy:
             self.dimensions = self.mugic_1_dimensions
         else:
             self.dimensions = self.__class__.dimensions
+
+    def autoDetectMugicType(self):
+        if not self.connected(): return
+        md = self.next()
+        if md is None: return
+        # Mugic 1.0 has a crazy high mV value
+        if md['mV'] > 100 and not self.legacy: self.toggleLegacy()
+        elif md['mV'] < 100 and self.legacy: self.toggleLegacy()
 
     def __del__(self):
         self.close()
@@ -609,9 +584,23 @@ class MugicDevice(IMUController):
         ret_val['seqnum'] = datagrams[0]['seqnum']
         return ret_val
 
+    def calibrate(self, *args, **kwargs):
+        if self.legacy is None:
+            self.autoDetectMugicType()
+        super().calibrate(*args, **kwargs)
+        # don't want to calibrate these values
+        self._zero['Battery'] = 0
+        self._zero['mV'] = 0
+        self._zero['seqnum'] = 0
+        self._zero['seconds'] = 0
+        self._zero['calib_sys'] = 0
+        self._zero['calib_accel'] = 0
+        self._zero['calib_gyro'] = 0
+        self._zero['calib_mag'] = 0
+
 # mock mugic device - used to simulate a mugic device
 class MockMugicDevice(MugicDevice):
-    def __init__(self, port=4000, datafile=None, legacy=False):
+    def __init__(self, port=4000, datafile=None, legacy=None):
         super().__init__(port, legacy)
         self._reserve = None
         self._data = deque()
@@ -769,8 +758,8 @@ class IMUDisplay:
         self._camera = graph3d.Camera()
         # orient to the right direction
         o = self._imu.orientation
-        self._camera.crot *= quat.Rotator(pi/2, o[1], o[2], o[0])
-        self._camera.crot *= quat.Rotator(pi/2, o[2], o[0], o[1])
+        #self._camera.crot *= quat.Rotator(pi/2, o[1], o[2], o[0])
+        #self._camera.crot *= quat.Rotator(pi/2, o[2], o[0], o[1])
         # apply a slight tilt so you can see all the axes
         self._camera.crot *= quat.Rotator(-pi/4, 1, 1, 1)
         self._camera["accel"] = self._image_accel
@@ -805,7 +794,6 @@ class IMUDisplay:
                     datagram['QX'],
                     datagram['QY'],
                     datagram['QZ'])
-            data_quat = data_quat.normalise()
             accel_data = quat.Vector(
                     _log_scale(datagram['AX']),
                     _log_scale(datagram['AY']),
@@ -818,14 +806,13 @@ class IMUDisplay:
                     _log_scale(datagram['GX']/60.0),
                     _log_scale(datagram['GY']/60.0),
                     _log_scale(datagram['GZ']/60.0))
-            speed_data = [_log_scale(data / 3)
-                             for data in (datagram['VX'], datagram['VY'], datagram['VZ'])]
             #print(quat.euler(data_quat))
+            #data_quat = data_quat.normalise() # cause
             self._camera["accel"] = self._image_accel * accel_data
             self._camera["gyro"] = self._image_gyro * gyro_data
             self._camera["compass"] = self._image_magnet * magnet_data
             self._camera["cube"] = self._image_cube * self._imu.dimensions\
-                    @ data_quat # + speed_data
+                    @ data_quat
             self._camera["facing"] = self._image_facing @ data_quat
         self._camera.show(self._image)
         return self._image
@@ -834,12 +821,12 @@ class IMUDisplay:
         self._text = "No Connection"
         self._action_text = "No Connection"
         data_labels= ["quaternion", "euler", "accel",
-                      "gyro", "magnetometer", "velocity",
-                      "battery/frame", "calib (SAGM)"]
+                      "gyro", "magnetometer",
+                      "battery", "frame", "calib (SAGM)"]
         self._data_format_text = '\n'.join(
             [value+": {}" for value in data_labels])
         self._action_format_text = "Moving: {}\nRotating: {}\n"
-        self._action_format_text += "Pointing: {:6s} Yaw {:6s} Pitch {:6s} Roll {:6s}"
+        self._action_format_text += "Pointing: {:3s} Yaw {:3s} Pitch {:3s} Roll {:3s}"
 
     def getDataText(self):
         if not self._imu.dirty: return self._text
@@ -852,13 +839,14 @@ class IMUDisplay:
         accel = data_row.format(md['AX'], md['AY'], md['AZ'])
         gyro = data_row.format(md['GX'], md['GY'], md['GZ'])
         mag = data_row.format(md['MX'], md['MY'], md['MZ'])
-        battery_and_frame = "{:5.2f} - {}".format(md['Battery'], md['seqnum'])
-        speed = data_row.format(md['VX'], md['VY'], md['VZ'])
+        battery_and_mv = "{:5.2f} {}mV".format(
+                md['Battery'], md['mV'])
+        frame = md['seqnum']
         calib_status = " & ".join(
                 [":(" if md[c] < 1.0 else ":|" if md[c] < 2.0 else ":)" if md[c] < 3.0 else ":D"
                 for c in ['calib_sys', 'calib_accel', 'calib_gyro', 'calib_mag']])
         self._text = self._data_format_text.format(quat, euler, accel, gyro,
-                                        mag, speed, position, battery_and_frame, calib_status)
+                                                   mag, battery_and_mv, frame, calib_status)
         self._text = str(self._imu) + '\n' + self._text
         return self._text
 
@@ -995,6 +983,8 @@ def _viewMugicDevice(mugic_device):
             frames += 1
             mugic_device.dirty = True
             fps_value = ((frames*1000)/(pygame.time.get_ticks()-ticks))
+            if mugic_device.legacy is None:
+                mugic_device.autoDetectMugicType()
 
         if mugic_device.dirty:
             mugic_image = mugic_display.getImage()
@@ -1028,16 +1018,17 @@ def main():
     parser.add_argument('-d', '--datafile', default="recording.txt",
                         help="datafile to playback/record to")
     parser.add_argument('-l', '--legacy', action='store_true',
-                        help="flag for if using Mugic 1.0")
+                        help="flag to use Mugic 1.0")
     args = parser.parse_args()
     mugic = None
+    legacy = True if args.legacy else None
     if args.record:
-        mugic = MugicDevice(port=args.port, buffer_size=None, legacy=args.legacy)
+        mugic = MugicDevice(port=args.port, buffer_size=None, legacy=legacy)
         _recordMugicDevice(mugic, args.datafile, args.seconds)
     if args.playback:
-        mugic = MockMugicDevice(datafile=args.datafile, legacy=args.legacy)
+        mugic = MockMugicDevice(datafile=args.datafile, legacy=legacy)
     if mugic is None:
-        mugic = MugicDevice(port=args.port, legacy=args.legacy)
+        mugic = MugicDevice(port=args.port, legacy=legacy)
     print(mugic)
     print("Running mugic_helper display...")
     print("== Instructions ==")
