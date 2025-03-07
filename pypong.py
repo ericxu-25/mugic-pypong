@@ -63,6 +63,19 @@ class Striker(GameSprite):
         self.rotation += self.rot_velocity * 60.0/self.game.fps
         self.rotateTo(self.rotation)
 
+    def _moveTowardsNormal(self):
+        ret_val = True
+        if(self._y > self.game._height // 2 + self.speed):
+            self._moveUp()
+            ret_val = False
+        elif(self._y < self.game.height // 2 - self.speed):
+            self._moveDown()
+            ret_val = False
+        if self.rotation > 30:
+            self._rotateLeft()
+            ret_val = False
+        return ret_val
+
     def _snapToEdge(self):
         if self._y > self.game._height // 2:
             self._y = self.game.bottom - self._height
@@ -633,8 +646,7 @@ class PongGame(Game):
         elif key in (pygame.K_r,) and key.down:
             self._restart()
 
-
-    def _update(self):
+    def _handle_p1_controls(self):
         if self.p1_up:
             self.striker_right._moveUp()
         if self.p1_dn:
@@ -643,6 +655,8 @@ class PongGame(Game):
             self.striker_right._rotateRight()
         if self.p1_lt:
             self.striker_right._rotateLeft()
+
+    def _handle_p2_controls(self):
         if self.p2_up:
             self.striker_left._moveUp()
         if self.p2_dn:
@@ -651,7 +665,14 @@ class PongGame(Game):
             self.striker_left._rotateRight()
         if self.p2_lt:
             self.striker_left._rotateLeft()
+
+    def _increase_ball_speed(self):
         self.ball._increase_speed(1/self.fps/self.SPEED_INCREASE_TIME)
+
+    def _update(self):
+        self._handle_p1_controls()
+        self._handle_p2_controls()
+        self._increase_ball_speed()
 
     def _scoreOnPlayer(self, player):
         if player == self.striker_left:
@@ -685,6 +706,8 @@ class MugicPongGame(PongGame):
         self._init_mugic_variables()
         self._init_mugic_image()
         self._init_mugic_text()
+        self.p1_jolt = False
+        self.p2_jolt = False
 
     def _init_mugic_variables(self):
         self._calibrate_p1_in_next_frames = -1
@@ -694,16 +717,20 @@ class MugicPongGame(PongGame):
     def _handle_mugic_controls(self):
         if self.mugic_player_1.connected():
             m1 = self.mugic_player_1
-            self.p1_rt = m1.yawingRight()
-            self.p1_lt = m1.yawingLeft()
-            self.p1_up = m1.pitchingUp()
-            self.p1_dn = m1.pitchingDown()
+            self.p1_rt = m1.pointingRight()
+            self.p1_lt = m1.pointingLeft()
+            self.p1_up = m1.pointingUp()
+            self.p1_dn = m1.pointingDown()
+            if m1.jolted(30):
+                self.p1_jolt = True
         if self.mugic_player_2.connected():
             m2 = self.mugic_player_2
-            self.p2_rt = m2.yawingRight()
-            self.p2_lt = m2.yawingLeft()
-            self.p2_up = m2.pitchingUp()
-            self.p2_dn = m2.pitchingDown()
+            self.p2_rt = m2.pointingRight()
+            self.p2_lt = m2.pointingLeft()
+            self.p2_up = m2.pointingUp()
+            self.p2_dn = m2.pointingDown()
+            if m2.jolted(30):
+                self.p2_jolt = True
             return
 
     def _handle_events(self):
@@ -816,7 +843,16 @@ Mugic Controls:
             self._insert_mugic_image()
         self._insert_mugic_text()
         self._frame_count += 1
-        super()._update()
+        if not self.p1_jolt:
+            self._handle_p1_controls()
+        elif self.striker_right._moveTowardsNormal():
+            self.p1_jolt = False
+
+        if not self.p2_jolt:
+            self._handle_p2_controls()
+        elif self.striker_left._moveTowardsNormal():
+            self.p2_jolt = False
+        self._increase_ball_speed()
 
 # MAIN
 def main():
