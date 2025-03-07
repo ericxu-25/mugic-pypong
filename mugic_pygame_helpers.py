@@ -215,6 +215,27 @@ class Sprite(pygame.sprite.DirtySprite):
     def width(self): return self._width
 
     @property
+    def bottom(self): return self._y + self._height
+
+    @property
+    def top(self): return self._y
+
+    @property
+    def centery(self): return self._y + self._height//2
+
+    @property
+    def right(self): return self._x + self._width
+
+    @property
+    def centerx(self): return self._x + self._width//2
+
+    @property
+    def left(self): return self._x
+
+    def distanceTo(self, other):
+        return math.sqrt((self.centerx - other.centerx)**2 + (self.centery-other.centery)**2)
+
+    @property
     def colorkey(self):
         return self._colorkey
 
@@ -298,8 +319,6 @@ class Sprite(pygame.sprite.DirtySprite):
         if not self._debug and self._debug_screen == None:
             return None
         self._debug_screen.refresh()
-
-
 
 class GameSprite(Sprite):
     def __init__(self, game=None):

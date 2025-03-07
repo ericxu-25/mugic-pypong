@@ -306,21 +306,26 @@ class IMUController(IMU):
         return angle >= left and angle <= right
 
     # converts the IMU's quaternion orientation to what point it is facing
-    def _quat_facing(self, datagram):
+    def _pointing_at(self, datagram):
+        if datagram is None: return (0, 0, 0)
         data_quat = IMU.to_quaternion(datagram).normalise()
         unit_vector = quat.Vector(*self.orientation) @ data_quat
         return unit_vector.xyz
+
+    def pointingAt(self, datagram=None):
+        if datagram is None: datagram = self.next()
+        return self._pointing_at(datagram)
 
     # alternative approach to facing using quaternions
     def _pointing(self, point, threshold=0.70, datagram=None, pointing_at=None):
         if pointing_at is None and datagram is None:
             datagram = self.next()
         if pointing_at is None:
-            pointing_at = self._quat_facing(datagram)
-        return self._pointing_at(point, pointing_at, threshold)
+            pointing_at = self._pointing_at(datagram)
+        return self._is_pointing_at(point, pointing_at, threshold)
 
     # simple distance function based check
-    def _pointing_at(self, p0, p1, threshold):
+    def _is_pointing_at(self, p0, p1, threshold):
         distance = math.sqrt(sum([(v1-v2)**2 for v1,v2 in zip(p0,p1)]))
         return distance < threshold
 
@@ -467,7 +472,7 @@ class IMUController(IMU):
     # returns which quadrant is being pointed at
     def pointing(self, text=False, **kwargs):
         if "datagram" not in kwargs: kwargs["datagram"] = self.next()
-        pointing_at = normalise_point(self._quat_facing(kwargs["datagram"]))
+        pointing_at = normalise_point(self._pointing_at(kwargs["datagram"]))
         if "pointing_at" not in kwargs: kwargs["pointing_at"] = pointing_at
         pointing_bits = 0
         if self.pointingUp(**kwargs): pointing_bits += 0b1
@@ -510,12 +515,9 @@ class MugicDevice(IMUController):
     dimensions = (0.8, 0.5, 0.2)
     mugic_1_dimensions = (0.8, 0.5, 0.4)
 
-    def __init__(self, port=4000, buffer_size=10, legacy=None):
+    def __init__(self, port=4000, buffer_size=10):
         super().__init__(buffer_size)
-        if legacy == True: # Mugic 1.0
-            self.dimensions = self.mugic_1_dimensions
-            self.legacy = True
-        self.legacy = legacy
+        self.legacy = False
         self.port = port
         self._mugic_init()
         return
@@ -552,7 +554,7 @@ class MugicDevice(IMUController):
         self._osc_server.terminate_server()
 
     def toggleLegacy(self):
-        self.legacy = (bool) (not self.legacy)
+        self.legacy = not self.legacy
         if self.legacy:
             self.dimensions = self.mugic_1_dimensions
         else:
@@ -585,8 +587,7 @@ class MugicDevice(IMUController):
         return ret_val
 
     def calibrate(self, *args, **kwargs):
-        if self.legacy is None:
-            self.autoDetectMugicType()
+        self.autoDetectMugicType()
         super().calibrate(*args, **kwargs)
         # don't want to calibrate these values
         self._zero['Battery'] = 0
@@ -600,8 +601,8 @@ class MugicDevice(IMUController):
 
 # mock mugic device - used to simulate a mugic device
 class MockMugicDevice(MugicDevice):
-    def __init__(self, port=4000, datafile=None, legacy=None):
-        super().__init__(port, legacy)
+    def __init__(self, port=4000, datafile=None):
+        super().__init__(port)
         self._reserve = None
         self._data = deque()
         self._datafile = datafile
@@ -1017,18 +1018,16 @@ def main():
                         help="amount of seconds to record")
     parser.add_argument('-d', '--datafile', default="recording.txt",
                         help="datafile to playback/record to")
-    parser.add_argument('-l', '--legacy', action='store_true',
-                        help="flag to use Mugic 1.0")
     args = parser.parse_args()
     mugic = None
     legacy = True if args.legacy else None
     if args.record:
-        mugic = MugicDevice(port=args.port, buffer_size=None, legacy=legacy)
+        mugic = MugicDevice(port=args.port, buffer_size=None)
         _recordMugicDevice(mugic, args.datafile, args.seconds)
     if args.playback:
-        mugic = MockMugicDevice(datafile=args.datafile, legacy=legacy)
+        mugic = MockMugicDevice(datafile=args.datafile)
     if mugic is None:
-        mugic = MugicDevice(port=args.port, legacy=legacy)
+        mugic = MugicDevice(port=args.port)
     print(mugic)
     print("Running mugic_helper display...")
     print("== Instructions ==")

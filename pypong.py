@@ -13,6 +13,8 @@ class Striker(GameSprite):
         super().__init__(game)
         self.velocity = 0
         self.rot_velocity = 0
+        self._CPU_RANDOM = random.randint(1, 30)
+        self._controller = "Keyboard"
 
     def setup(self, color, wh, friction, speed, accel, rot_speed, rot_accel, power, grip, elasticity):
         self.speed = 15 * (speed/10.0)
@@ -65,16 +67,74 @@ class Striker(GameSprite):
 
     def _moveTowardsNormal(self):
         ret_val = True
-        if(self._y > self.game._height // 2 + self.speed):
+        if(self.centery > self.game._height // 2 + self.speed):
             self._moveUp()
             ret_val = False
-        elif(self._y < self.game.height // 2 - self.speed):
+        elif(self.centery < self.game.height // 2 - self.speed):
             self._moveDown()
             ret_val = False
-        if self.rotation > 30:
-            self._rotateLeft()
+        return ret_val
+
+    def _moveTowardsPoint(self, targetY):
+        ret_val = True
+        if(self.centery > targetY + self.speed):
+            self._moveUp()
+            ret_val = False
+        elif(self.centery < targetY - self.speed):
+            self._moveDown()
             ret_val = False
         return ret_val
+
+    def _rotateTowardsNormal(self):
+        return self._rotateTowardsAngle(0)
+
+    def _rotateTowardsAngle(self, angle):
+        offset_angle = (self.rotation - angle + 720) % 180
+        if offset_angle < 4 * self.rot_speed:
+            self.rotateTo(angle)
+            return True
+        if offset_angle < 180:
+            self._rotateLeft()
+            return False
+        else:
+            self._rotateRight()
+            return False
+
+    def _rotateTowardsBall(self):
+        ball = self.game.ball
+        db = abs(self._x - ball._x)
+        if db > self._width + self._CPU_RANDOM * 6:
+            return
+        if ball.centery < self.centery:
+            if self.x > ball.x:
+                self._rotateLeft()
+            else: self._rotateRight()
+        else:
+            if self.x > ball.x:
+                self._rotateRight()
+            else:
+                self._rotateLeft()
+
+    def _moveTowardsBall(self):
+        ball = self.game.ball
+        if self.centery - 2*self.speed > ball._y + self._CPU_RANDOM//2:
+            self._moveUp()
+        elif self.centery + 2*self.speed < ball._y + self._CPU_RANDOM//2:
+            self._moveDown()
+
+    def _CPUMovement(self):
+        ball = self.game.ball
+        db = abs(self._x - ball._x)
+        if db > self.game._width//2:
+            self._rotateTowardsNormal()
+            if db > self.game._width * 0.7:
+                self._CPU_RANDOM = random.randint(1, 30)
+            elif self._CPU_RANDOM % 4 == 0:
+                self._moveTowardsNormal()
+            return
+        self._moveTowardsBall()
+        if self._CPU_RANDOM % 4 != 0:
+            self._rotateTowardsBall()
 
     def _snapToEdge(self):
         if self._y > self.game._height // 2:
@@ -97,7 +157,7 @@ class Striker(GameSprite):
             text_size = 16
             self._draw_striker_bounce_text = list()
             text = self._draw_striker_bounce_text
-            for i in range(2):
+            for i in range(3):
                 new_text = display.writeNewText(
                     "...", tab=tab)
                 text.append(new_text)
@@ -106,6 +166,8 @@ class Striker(GameSprite):
             text[0].setText("BOUNCE INFORMATION")
             text[1].setFormatString("ball speed: {:.2f}")
             text[1].setText(0)
+            text[2].setFormatString("Controller: {}")
+            text[2].setText("Keyboard")
         else:
             text = self._draw_striker_bounce_text
             text[1].setText(0)
@@ -173,8 +235,19 @@ class Striker(GameSprite):
         pygame.draw.line(tab.screen, Color.green,
                          ball_center, bounce_data['rotate'] + ball_center,
                          width = 5)
-
+        # set controller text
+        text[2].setText(self.controller)
         return
+
+    @property
+    def controller(self): return self._controller
+
+    @controller.setter
+    def controller(self, string):
+        self._controller = string
+        text = self._draw_striker_bounce_text
+        # draw the controller text
+        text[2].setText(self.controller)
 
 
     def move(self, x, y):
@@ -562,6 +635,10 @@ class PongGame(Game):
         self._update_menu_text_position()
         if background:
             self.menu_background_sprite.show()
+        if type(background) is tuple:
+            menu_background = pygame.Surface(self.screen_rect.size)
+            menu_background.fill(background)
+            self.menu_background_sprite.setImage(menu_background)
         self._draw_sprites()
 
     def _update_score(self):
@@ -613,9 +690,12 @@ class PongGame(Game):
         self.p2_rt = False
         self.p2_lm = False
         self.p2_rm = False
+        self.p1_CPU = False
+        self.p2_CPU = False
 
     def _handle_key(self, event):
         key = Key(event)
+        # arrow keys/ijkl & ,.uo for player 1
         if key in (pygame.K_UP, pygame.K_i):
             self.p1_up = key.down
         elif event.key in (pygame.K_DOWN, pygame.K_k):
@@ -628,6 +708,7 @@ class PongGame(Game):
             self.p1_lt = key.down
         elif event.key in (pygame.K_PERIOD, pygame.K_o):
             self.p1_rt = key.down
+        # wasd & qezxcv for player 2
         elif event.key in (pygame.K_w,):
             self.p2_up = key.down
         elif event.key in (pygame.K_s,):
@@ -640,13 +721,27 @@ class PongGame(Game):
             self.p2_lt = key.down
         elif event.key in (pygame.K_e, pygame.K_x, pygame.K_v):
             self.p2_rt = key.down
+        # p to pause
         elif key in (pygame.K_p,) and key.down:
             self._pause = not self._pause
             self._handle_pause()
+        # r to restart
         elif key in (pygame.K_r,) and key.down:
             self._restart()
+        # 1,2 to toggle CPU on left and right player
+        elif key in (pygame.K_1, ) and key.down:
+            self.p2_CPU = not self.p2_CPU
+            self.striker_left.controller = (
+                    "CPU" if self.p2_CPU else "Keyboard")
+        elif key in (pygame.K_2, ) and key.down:
+            self.p1_CPU = not self.p1_CPU
+            self.striker_right.controller = (
+                    "CPU" if self.p1_CPU else "Keyboard")
 
     def _handle_p1_controls(self):
+        if self.p1_CPU:
+            self.striker_right._CPUMovement()
+            return
         if self.p1_up:
             self.striker_right._moveUp()
         if self.p1_dn:
@@ -655,8 +750,10 @@ class PongGame(Game):
             self.striker_right._rotateRight()
         if self.p1_lt:
             self.striker_right._rotateLeft()
-
     def _handle_p2_controls(self):
+        if self.p2_CPU:
+            self.striker_left._CPUMovement()
+            return
         if self.p2_up:
             self.striker_left._moveUp()
         if self.p2_dn:
@@ -686,7 +783,7 @@ class PongGame(Game):
         if self._pause:
             title_text = "PAUSED"
             subtitle_text = "Press P to continue"
-            self._draw_menu_screen(title_text, subtitle_text, background=False)
+            self._draw_menu_screen(title_text, subtitle_text, background=Color.black)
         else:
             self.menu_title_text.hide()
             self.menu_subtitle_text.hide()
@@ -708,35 +805,57 @@ class MugicPongGame(PongGame):
         self._init_mugic_text()
         self.p1_jolt = False
         self.p2_jolt = False
+        self.p1_y = 0
+        self.p2_y = 0
 
     def _init_mugic_variables(self):
-        self._calibrate_p1_in_next_frames = -1
-        self._calibrate_p2_in_next_frames = -1
         self._frame_count = 0
 
     def _handle_mugic_controls(self):
-        if self.mugic_player_1.connected():
+        if not self.p1_CPU and self.mugic_player_1.connected():
             m1 = self.mugic_player_1
-            self.p1_rt = m1.pointingRight()
-            self.p1_lt = m1.pointingLeft()
-            self.p1_up = m1.pointingUp()
-            self.p1_dn = m1.pointingDown()
-            if m1.jolted(30):
+            m1_data = m1.next()
+            # disable keyboard
+            self.p1_rt = False
+            self.p1_lt = False
+            self.p1_up = False
+            self.p1_dn = False
+            # control position with the forward angle
+            m1_point = m1.pointingAt(m1_data)
+            targetY = self._height//2 - int(m1_point[2] * self._height//2)
+            self.p1_y = targetY
+            # control rotation with the tilt
+            self.p1_rt = m1.rollingRight()
+            self.p1_lt = m1.rollingLeft()
+            # detect jolt
+            if m1.jolted(20):
                 self.p1_jolt = True
-        if self.mugic_player_2.connected():
+        if not self.p2_CPU and self.mugic_player_2.connected():
             m2 = self.mugic_player_2
-            self.p2_rt = m2.pointingRight()
-            self.p2_lt = m2.pointingLeft()
-            self.p2_up = m2.pointingUp()
-            self.p2_dn = m2.pointingDown()
-            if m2.jolted(30):
+            m2_data = m2.next()
+            # disable keyboard
+            self.p2_rt = False
+            self.p2_lt = False
+            self.p2_up = False
+            self.p2_dn = False
+            # control position with the forward angle
+            m2_point = m2.pointingAt(m2_data)
+            targetY = self._height//2 - int(m2_point[2] * self._height//2)
+            self.p2_y = targetY
+            # control rotation with the tilt
+            self.p2_rt = m2.rollingRight()
+            self.p2_lt = m2.rollingLeft()
+            # detect jolt
+            if m2.jolted(20):
                 self.p2_jolt = True
-            return
 
     def _handle_events(self):
+        super()._handle_events()
         if self._frame_count % 3 == 0:
             self._handle_mugic_controls()
-        super()._handle_events()
+
+    def _reset(self):
+        super()._reset()
 
     def _init_mugic_image(self):
         self.p1_mugic_display = IMUDisplay(self.mugic_player_1)
@@ -781,25 +900,27 @@ class MugicPongGame(PongGame):
             p2_txt.setText(self.p2_mugic_display.text)
         return
 
+    def _calibrate_mugics(self):
+        self.mugic_player_1.calibrate()
+        self.mugic_player_2.calibrate()
+        if not self.p1_CPU:
+            self.striker_right.controller = str(self.mugic_player_1)
+        if not self.p2_CPU:
+            self.striker_left.controller = str(self.mugic_player_2)
+
     # additional keyboard controls
     def _handle_key(self, event):
         super()._handle_key(event)
         key = Key(event)
         # space to calibrate both
         if key in (pygame.K_SPACE, ):
-            self.mugic_player_1.calibrate()
-            self.mugic_player_2.calibrate()
-        # h to open instruction screen
-        if key in (pygame.K_h,) and key.down:
-           self._title_screen()
+            self._calibrate_mugics()
         # m to open title screen
-        if key in (pygame.K_m, ) and key.down:
+        if key in (pygame.K_m,) and key.down:
+           self._title_screen()
+        # h to open instruction screen
+        if key in (pygame.K_h, ) and key.down:
             self._instruction_screen()
-        # 1,2 to toggle legacy on left and right player (if using mugic 1.0)
-        if key in (pygame.K_1, ) and key.down:
-            self.mugic_player_2.toggleLegacy()
-        if key in (pygame.K_2, ) and key.down:
-            self.mugic_player_1.toggleLegacy()
 
     # override so pause only pauses the game sprites - can still see Mugic info
     def _tick(self):
@@ -812,7 +933,7 @@ class MugicPongGame(PongGame):
         self.pause()
         title_text = "MUGICAL PONG"
         subtitle_text = "press P to start, H for instructions"
-        self._draw_menu_screen(title_text, subtitle_text, background=True)
+        self._draw_menu_screen(title_text, subtitle_text, background=Color.blue)
 
     def _instruction_screen(self):
         self.pause()
@@ -823,35 +944,54 @@ class MugicPongGame(PongGame):
 * left side - wasdqe
 
 Mugic Controls:
-* spacebar to calibrate; 1 or 2 to switch to Mugic 1.0
+* spacebar to calibrate; 1 or 2 to activate CPU
 * point up/down to move striker
 * point right/left to rotate striker
 
-- Press P to pause, R to reset
+- Press P to continue, R to reset
 - Press M to return to Menu
 """
-        self._draw_menu_screen(title_text, instruction_text, background=True)
+        self._draw_menu_screen(title_text, instruction_text, background=Color.red)
 
     def start(self):
         # when starting the game, show the title screen
         self._title_screen()
         super().start()
 
-    def _update(self):
-        # drawing is expensive, so we only do them every few frames
-        if self._frame_count % 10 == 0:
-            self._insert_mugic_image()
-        self._insert_mugic_text()
-        self._frame_count += 1
-        if not self.p1_jolt:
+    def _controls(self):
+        if self.mugic_player_1.connected() and not self.p1_CPU:
+            if not self.p1_jolt:
+                self.striker_right._moveTowardsPoint(self.p1_y)
+                self.striker_right._moveTowardsPoint(self.p1_y)
+            else: self.p1_jolt = self.striker_right._moveTowardsNormal()
+            if not (self.p1_rt or self.p1_lt):
+                self.striker_right._rotateTowardsNormal()
+        if self.mugic_player_2.connected() and not self.p2_CPU:
+            if not self.p2_jolt:
+                self.striker_left._moveTowardsPoint(self.p2_y)
+                self.striker_left._moveTowardsPoint(self.p2_y)
+            else: self.p2_jolt = self.striker_left._moveTowardsNormal()
+            if not (self.p2_rt or self.p2_lt):
+                self.striker_left._rotateTowardsNormal()
+        if not self.p1_jolt or self.p1_CPU:
             self._handle_p1_controls()
-        elif self.striker_right._moveTowardsNormal():
-            self.p1_jolt = False
-
-        if not self.p2_jolt:
+        if not self.p2_jolt or self.p2_CPU:
             self._handle_p2_controls()
         elif self.striker_left._moveTowardsNormal():
             self.p2_jolt = False
+
+    def _update(self):
+        # drawing is expensive, so we only do them every few frames
+        if self._frame_count % 20 == 0:
+            self._insert_mugic_image()
+        self._insert_mugic_text()
+        self._frame_count += 1
+        if self._pause:
+            if self._frame_count == 60:
+                self._calibrate_mugics()
+            return
+        # control handling
+        self._controls()
         self._increase_ball_speed()
 
 # MAIN
