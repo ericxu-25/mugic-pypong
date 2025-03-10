@@ -22,8 +22,10 @@ from array import array
 
 import argparse
 import pygame
-from mugic_pygame_helpers import Window, WindowScreen, TextSprite, Color
+from mugic_pygame_helpers import Window, WindowScreen, TextSprite, Color, MONOSPACE
 from threading import Timer
+
+GRAVITY = 9.8
 
 # helper functions
 def _log_scale(number):
@@ -122,10 +124,14 @@ class IMU:
 
     def calibrate(self, *args, **kwargs):
         self.zero(*args, **kwargs)
-        # don't calibrate magnetometer
+        # don't zero magnetometer
         self._zero['MX'] = 0
         self._zero['MY'] = 0
         self._zero['MZ'] = 0
+        # don't zero accelerometer
+        self._zero['AX'] = 0
+        self._zero['AY'] = 0
+        self._zero['AZ'] = 0
 
     def _calibrate(self, datagram):
         calibrated_quat = (IMU.to_quaternion(self._zero).inverse()
@@ -216,7 +222,6 @@ class IMUController(IMU):
         self._time_stamp = time.time()
         self._next_datagram = None
         self._state = None
-        self.low_pass = [0.15] * 3
 
     def _parse_datagram(self, *values):
         values = [t(v) for t, v in zip(self.types, values)]
@@ -255,8 +260,8 @@ class IMUController(IMU):
         next_datagram = self.peekDatagram(raw=raw, smooth=smooth)
         if raw: return next_datagram
         # check if there was a disconnect
-        if self._next_datagram is not None and time.time() - self._last_datagram_time > 3:
-            print("controller disconnected")
+        if self._next_datagram is not None and time.time() - self._last_datagram_time > 5:
+            print(f"{self} disconnected")
             self._connected = False
             self._dirty = True
             self._next_datagram = None
@@ -274,7 +279,7 @@ class IMUController(IMU):
         return self.next()
 
     # easy controller methods - query controller speed, gyro, facing
-    def _moving(self, axis, direction=1, threshold=0.2, datagram=None):
+    def _moving(self, axis, direction=1, threshold=10, datagram=None):
         if datagram is None: datagram = self.next()
         if datagram is None: return False
         axis = 'AX' if axis == 0 else 'AY' if axis == 1 else 'AZ'
@@ -529,7 +534,14 @@ class MugicDevice(IMUController):
         if not self.legacy: # Mugic 2.0
             datagram['EZ'] = -datagram['EZ']
             datagram['GX'], datagram['GZ'] = -datagram['GZ'], datagram['GX']
+            # Mugic 2.0 accelerometer is not in absolute mode - includes gravity
+            datagram['AX'], datagram['AY'], datagram['AZ'] = \
+                    datagram['AX'], datagram['AZ'], datagram['AY']
         else: # Mugic 1.0 - yaw is inverted
+            # fit accelerometer data to local frame of reference
+            accel_vector = quat.Vector(datagram['AX'], datagram['AY'], datagram['AZ'])
+            #accel_vector @= IMU.to_quaternion(datagram)
+            datagram['AX'], datagram['AY'], datagram['AZ'] = accel_vector.xyz
             # ref: https://gamedev.stackexchange.com/questions/201977
             datagram['QZ'], datagram['QX'] = -datagram['QZ'], -datagram['QX']
             datagram['EY'] = -datagram['EY']
@@ -692,6 +704,35 @@ class IMUDisplay:
         self._image_size = (w, h)
         self._image = pygame.Surface(self._image_size)
         self._image.set_colorkey(Color.black)
+        self._action_image = self._image.copy()
+        # draw acceleration and gyroscope graph axes
+        ag_top = 1
+        ag_left = 1
+        ag_right = w - ag_left
+        ag_width = ag_right - ag_left
+        ag_height = h // 2 - 10
+        agrect = pygame.Rect(ag_top, ag_left, ag_width, ag_height)
+        ggrect = agrect.move(0, (h - ag_height - ag_top))
+        pygame.draw.line(self._action_image, color=Color.white,
+                         start_pos=(agrect.left-1, agrect.top),
+                         end_pos=(agrect.left-1, agrect.bottom))
+        pygame.draw.line(self._action_image, color=Color.white,
+                         start_pos=agrect.midleft,
+                         end_pos=agrect.midright)
+        pygame.draw.line(self._action_image, color=Color.white,
+                         start_pos=(ggrect.left-1, ggrect.top),
+                         end_pos=(ggrect.left-1, ggrect.bottom))
+        pygame.draw.line(self._action_image, color=Color.white,
+                         start_pos=ggrect.midleft,
+                         end_pos=ggrect.midright)
+        self._max_ay = 30
+        self._max_gy = 360 * 4
+        self._ag_rect = agrect
+        self._gg_rect = ggrect
+        self._ag_graph_surface = self._action_image.subsurface(
+                agrect)
+        self._gg_graph_surface = self._action_image.subsurface(
+                ggrect)
 
     def _set_image_size(self, w=None, h=None):
         if w is None and h is None:
@@ -757,10 +798,6 @@ class IMUDisplay:
         self._image_axes = graph3d.PositiveAxes(Color.red, Color.green, Color.blue)
         # camera initialization
         self._camera = graph3d.Camera()
-        # orient to the right direction
-        o = self._imu.orientation
-        #self._camera.crot *= quat.Rotator(pi/2, o[1], o[2], o[0])
-        #self._camera.crot *= quat.Rotator(pi/2, o[2], o[0], o[1])
         # apply a slight tilt so you can see all the axes
         self._camera.crot *= quat.Rotator(-pi/4, 1, 1, 1)
         self._camera["accel"] = self._image_accel
@@ -781,11 +818,17 @@ class IMUDisplay:
             return self.getImage(w, h)
         self._image.fill(Color.black)
         if not self._imu.connected():
-            pygame.draw.circle(self._image, (255, 0, 0), (w-w//16, h-h//16), max(w//32, 3))
+            pygame.draw.circle(self._image,
+                               Color.green,
+                               (w-w//16, h-h//16),
+                               max(w//64, 3))
             self._camera.show(self._image, "axes")
             return self._image
         else:
-            pygame.draw.circle(self._image, (0, 255, 0), (w-w//16, h-h//16), max(w//32, 3))
+            pygame.draw.circle(self._image,
+                               Color.red,
+                               (w-w//16, h-h//16),
+                               max(w//64, 3))
         # apply datagram transformations
         if datagram is None:
             datagram = self._imu.peekDatagram()
@@ -818,16 +861,83 @@ class IMUDisplay:
         self._camera.show(self._image)
         return self._image
 
+    def _norm_graph_val(self, val, maxy, rect):
+        y = val/maxy
+        if abs(y) > 1:
+            y = (-1 if y < 0 else 1)
+        y *= rect.height//2
+        y += rect.centery
+        return (rect.left, y)
+
+    # displays two graphs - accelerometer and gyrometer
+    def getActionImage(self, w=None, h=None, datagram=None):
+        w, h = self._set_image_size(w, h)
+        if not self._imu.dirty: return self._action_image
+        try:
+            _ = self._image_cube
+        except AttributeError as e:
+            if hasattr(self, "_image_cube"): raise AttributeError(e)
+            self._init_image_objects()
+            return self.getActionImage(w, h)
+        if datagram is None:
+            datagram = self._imu.peekDatagram()
+        if datagram is not None:
+            accel_data = (
+                    datagram['AX'],
+                    datagram['AY'],
+                    datagram['AZ'])
+            magnet_data = quat.Vector(
+                    _log_scale(datagram['MX']),
+                    _log_scale(datagram['MY']),
+                    _log_scale(datagram['MZ']))
+            gyro_data = (
+                    datagram['GX'],
+                    datagram['GY'],
+                    datagram['GZ'])
+            # draw acceleration values
+            accel_points = [self._norm_graph_val(
+                val,
+                self._max_ay,
+                self._ag_rect)
+                            for val in accel_data]
+            self._action_image.fill(Color.black,
+                                    (self._ag_rect.topleft,
+                                     (1, self._ag_rect.height)))
+            self._action_image.fill(Color.white,
+                                    (self._ag_rect.midleft, (1, 1)))
+            colors = [Color.red, Color.green, Color.blue]
+            for point, color in zip(accel_points, colors):
+                self._action_image.fill(color, (point, (1, 3)))
+            # draw gyroscope values
+            gyro_points = [self._norm_graph_val(
+                val,
+                self._max_gy,
+                self._gg_rect)
+                           for val in gyro_data]
+            self._action_image.fill(Color.black,
+                                    (self._gg_rect.topleft,
+                                     (1, self._gg_rect.height)))
+            self._action_image.fill(Color.white,
+                                    (self._gg_rect.midleft, (1, 1)))
+            colors = [Color.cyan, Color.magenta, Color.yellow]
+            for point, color in zip(gyro_points, colors):
+                self._action_image.fill(color, (point, (1, 3)))
+
+        # scroll graphs to the left
+        self._ag_graph_surface.scroll(dx=1)
+        self._gg_graph_surface.scroll(dx=1)
+        return self._action_image
+
     def _init_text(self):
         self._text = "No Connection"
         self._action_text = "No Connection"
-        data_labels= ["quaternion", "euler", "accel",
-                      "gyro", "magnetometer",
+        data_labels= [" quat", "euler", "accel",
+                      " gyro", " magn",
                       "battery", "frame", "calib (SAGM)"]
         self._data_format_text = '\n'.join(
             [value+": {}" for value in data_labels])
         self._action_format_text = "Moving: {}\nRotating: {}\n"
-        self._action_format_text += "Pointing: {:3s} Yaw {:3s} Pitch {:3s} Roll {:3s}"
+        self._action_format_text += "Pointing: {:3s}\nYaw {:3s} Pitch {:3s} Roll {:3s}"
 
     def getDataText(self):
         if not self._imu.dirty: return self._text
@@ -855,9 +965,9 @@ class IMUDisplay:
         if not self._imu.dirty: return self._action_text
         datagram = self._imu.next(raw=False)
         if datagram is None: return self._action_text
-        moving = ", ".join(self._imu.moving(text=True, datagram=datagram))
-        rotating = ", ".join(self._imu.rotating(text=True, datagram=datagram))
-        yawing = ", ".join(self._imu.yawing(text=True, datagram=datagram))
+        moving = ", ".join(self._imu.moving(text=True, datagram=datagram)) or "NO"
+        rotating = ", ".join(self._imu.rotating(text=True, datagram=datagram)) or "NO"
+        yawing = ", ".join(self._imu.yawing(text=True, datagram=datagram)) or "NO"
         pitching = ", ".join(self._imu.pitching(text=True, datagram=datagram))
         rolling = ", ".join(self._imu.rolling(text=True, datagram=datagram))
         pointing = ", ".join(self._imu.pointing(text=True, datagram=datagram))
@@ -907,7 +1017,8 @@ def _write_recorded_data(mugic, file):
 def _viewMugicDevice(mugic_device):
     pygame.init()
     # window setup
-    window_size = (500, 500)
+    window_size = (1000, 500)
+    pane_size = (500, 500)
     Window().rescale(*window_size)
     Window().name = "PyMugic IMU orientation visualization"
     display = pygame.display.get_surface()
@@ -915,7 +1026,7 @@ def _viewMugicDevice(mugic_device):
     ticks = pygame.time.get_ticks()
     # mugic display setup
     mugic_display = IMUDisplay(mugic_device)
-    mugic_display.setImageSize(*window_size)
+    mugic_display.setImageSize(*pane_size)
     # object setup
     display_screen = WindowScreen(*window_size)
     Window().addScreen(display_screen)
@@ -928,8 +1039,10 @@ def _viewMugicDevice(mugic_device):
     fps_text.setFormatString("fps: {}")
     fps_text.setText("NOT CONNECTED").setFontSize(30)
     fps_text.moveTo(50, 50)
-    mugic_data_text.setFormatString("{}").moveTo(50, 100).setFontSize(20).hide()
-    mugic_movement_text.setFormatString("{}").moveTo(50, 350).setFontSize(20).hide()
+    mugic_data_text.setFormatString("{}").moveTo(550, 100).setFontSize(20).hide()
+    mugic_data_text.setFontType(MONOSPACE)
+    mugic_movement_text.setFormatString("{}").moveTo(550, 350).setFontSize(20).hide()
+    mugic_movement_text.setFontType(MONOSPACE)
     display_screen._redraw()
     pygame.display.flip()
     # variables
@@ -978,21 +1091,25 @@ def _viewMugicDevice(mugic_device):
             frames = 0
             ticks = pygame.time.get_ticks() - 1
 
-        next_datagram = mugic_device.next(raw=True)
+        next_datagram = mugic_device.next()
         if next_datagram is not None and next_datagram.values() != last_datagram:
             last_datagram = list(next_datagram.values())
             frames += 1
             mugic_device.dirty = True
             fps_value = ((frames*1000)/(pygame.time.get_ticks()-ticks))
-            if mugic_device.legacy is None:
+            if frames < 20:
                 mugic_device.autoDetectMugicType()
 
         if mugic_device.dirty:
-            mugic_image = mugic_display.getImage()
+            mugic_image = mugic_display.getImage(datagram=next_datagram)
+            action_image = mugic_display.getActionImage(datagram=next_datagram)
             display_screen._redraw()
-            mugic_image = pygame.transform.scale_by(mugic_image,
+            mugic_image = pygame.transform.smoothscale_by(mugic_image,
+                                                 display_screen._scale)
+            action_image = pygame.transform.smoothscale_by(action_image,
                                                  display_screen._scale)
             display.blit(mugic_image, (0, 0))
+            display.blit(action_image, (500*display_screen._scale, 0))
             if mugic_data_text.visible:
                 mugic_data_text.setText(mugic_display.getDataText())
             if mugic_movement_text.visible:
@@ -1020,7 +1137,6 @@ def main():
                         help="datafile to playback/record to")
     args = parser.parse_args()
     mugic = None
-    legacy = True if args.legacy else None
     if args.record:
         mugic = MugicDevice(port=args.port, buffer_size=None)
         _recordMugicDevice(mugic, args.datafile, args.seconds)

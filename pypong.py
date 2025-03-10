@@ -89,15 +89,17 @@ class Striker(GameSprite):
         return self._rotateTowardsAngle(0)
 
     def _rotateTowardsAngle(self, angle):
-        offset_angle = (self.rotation - angle + 720) % 180
-        if offset_angle < 4 * self.rot_speed:
+        # mod 180 because the striker is symmetrical
+        offset = (angle - self.rotation + 360) % 180
+        threshold = 2 * self.rot_speed
+        if (180 - offset) < threshold or offset < threshold:
             self.rotateTo(angle)
             return True
-        if offset_angle < 180:
-            self._rotateLeft()
+        elif offset > 90:
+            self._rotateRight()
             return False
         else:
-            self._rotateRight()
+            self._rotateLeft()
             return False
 
     def _rotateTowardsBall(self):
@@ -806,7 +808,9 @@ class MugicPongGame(PongGame):
         self.p1_jolt = False
         self.p2_jolt = False
         self.p1_y = 0
+        self.p1_rotz = 0
         self.p2_y = 0
+        self.p2_rotz = 0
 
     def _init_mugic_variables(self):
         self._frame_count = 0
@@ -843,8 +847,9 @@ class MugicPongGame(PongGame):
             targetY = self._height//2 - int(m2_point[2] * self._height//2)
             self.p2_y = targetY
             # control rotation with the tilt
-            self.p2_rt = m2.rollingRight()
-            self.p2_lt = m2.rollingLeft()
+            #self.p2_rt = m2.rollingRight()
+            #self.p2_lt = m2.rollingLeft()
+            self.p2_rotz = m2_data['EZ']
             # detect jolt
             if m2.jolted(20):
                 self.p2_jolt = True
@@ -888,10 +893,12 @@ class MugicPongGame(PongGame):
         p2_txt.move(5, 2)
         p1_txt.setFontSize(20)
         p2_txt.setFontSize(30)
+        p1_txt.setFontType(MONOSPACE)
+        p2_txt.setFontType(MONOSPACE)
 
     def _insert_mugic_text(self):
         p1_txt, p2_txt = self.p1_mugic_text, self.p2_mugic_text
-        if p1_txt._fontsize > 11:
+        if p1_txt._fontsize > 11: # to override default font size
             p1_txt.setFontSize(11)
             p2_txt.setFontSize(11)
         if self.mugic_player_1.connected():
@@ -963,16 +970,19 @@ Mugic Controls:
             if not self.p1_jolt:
                 self.striker_right._moveTowardsPoint(self.p1_y)
                 self.striker_right._moveTowardsPoint(self.p1_y)
-            else: self.p1_jolt = self.striker_right._moveTowardsNormal()
-            if not (self.p1_rt or self.p1_lt):
-                self.striker_right._rotateTowardsNormal()
+                if not (self.p1_rt or self.p1_lt):
+                    self.striker_right._rotateTowardsNormal()
+            else: self.p1_jolt = not self.striker_right._moveTowardsNormal()
         if self.mugic_player_2.connected() and not self.p2_CPU:
             if not self.p2_jolt:
                 self.striker_left._moveTowardsPoint(self.p2_y)
                 self.striker_left._moveTowardsPoint(self.p2_y)
-            else: self.p2_jolt = self.striker_left._moveTowardsNormal()
-            if not (self.p2_rt or self.p2_lt):
-                self.striker_left._rotateTowardsNormal()
+                self.striker_left._rotateTowardsAngle(self.p2_rotz)
+                if not (self.p2_rt or self.p2_lt):
+                    self.striker_left._rotateTowardsNormal()
+            else:
+                self.p2_jolt = not (self.striker_left._moveTowardsNormal() and
+                                    self.striker_left._rotateTowardsNormal())
         if not self.p1_jolt or self.p1_CPU:
             self._handle_p1_controls()
         if not self.p2_jolt or self.p2_CPU:

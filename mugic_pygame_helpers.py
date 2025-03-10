@@ -18,6 +18,7 @@ import colorsys
 # GLOBALS
 pygame.font.init()
 FREESANS = 'freesansbold.ttf'
+MONOSPACE = pygame.font.match_font(["inconsolata", "consolas", "monospace"])
 
 class Color:
     black = (0,0,0)

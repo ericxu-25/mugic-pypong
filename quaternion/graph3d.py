@@ -1,7 +1,7 @@
 # graph3d.py 3D graphics demo of quaternion use
 # code taken from https://github.com/peterhinch/micropython-samples/blob/master/quaternion/graph3d.py
 
-# modified to use pygame screens instead of micropython (setup3d)
+# modified to use pygame instead of micropython (setup3d)
 
 # Released under the MIT License (MIT). See LICENSE.
 # Copyright (c) 2020 Peter Hinch
