@@ -83,6 +83,8 @@ class Quaternion:
             return Quaternion(1, 0, 0, 0)
         m = abs(self)  # Magnitude
         # assert m > 0.1  # rotation quaternion should have magnitude ~= 1
+        if m < 0.1:
+            return Quaternion(1, 0, 0, 0)
         if isclose(m, 1.0, rel_tol=mdelta):
             return self  # No normalisation necessary
         return Quaternion(*(a/m for a in self))

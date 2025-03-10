@@ -117,6 +117,7 @@ class IMU:
         self._zero = dict()
         for key in IMU.datagram:
             self._zero[key] = 0
+        self._zero['QW'] = 1
         if len(args) != 0:
             for key, arg in zip(self.datagram, args):
                 self._zero[key] = arg
@@ -515,6 +516,7 @@ class MugicDevice(IMUController):
         'calib_sys', 'calib_gyro', 'calib_accel', 'calib_mag', # Calibration state
         'seconds', # since last reboot
         'seqnum', # messagesequence number
+        'SX', 'SY', 'SZ', # absolute acceleration
     )
     orientation  = (1, 0, 0)
     dimensions = (0.8, 0.5, 0.2)
@@ -534,13 +536,16 @@ class MugicDevice(IMUController):
         if not self.legacy: # Mugic 2.0
             datagram['EZ'] = -datagram['EZ']
             datagram['GX'], datagram['GZ'] = -datagram['GZ'], datagram['GX']
-            # Mugic 2.0 accelerometer is not in absolute mode - includes gravity
-            datagram['AX'], datagram['AY'], datagram['AZ'] = \
-                    datagram['AX'], datagram['AZ'], datagram['AY']
+            # converting acceleration to absolute acceleration
+            absolute_accel = quat.Vector(
+                    datagram['AX'], datagram['AY'], datagram['AZ'])
+            absolute_accel @= IMU.to_quaternion(datagram)
+            absolute_accel @= quat.Rotator(pi/2, 0, 0, 1)
+            datagram['SX'], datagram['SY'], datagram['SZ'] = absolute_accel.xyz
+            datagram['SZ'] -= GRAVITY
         else: # Mugic 1.0 - yaw is inverted
             # fit accelerometer data to local frame of reference
             accel_vector = quat.Vector(datagram['AX'], datagram['AY'], datagram['AZ'])
-            #accel_vector @= IMU.to_quaternion(datagram)
             datagram['AX'], datagram['AY'], datagram['AZ'] = accel_vector.xyz
             # ref: https://gamedev.stackexchange.com/questions/201977
             datagram['QZ'], datagram['QX'] = -datagram['QZ'], -datagram['QX']
@@ -598,6 +603,14 @@ class MugicDevice(IMUController):
         ret_val['seqnum'] = datagrams[0]['seqnum']
         return ret_val
 
+    def _calibrate(self, datagram):
+        datagram = super()._calibrate(datagram)
+        # the absolute accel by default follows east/north
+        sv = quat.Vector(datagram['SX'], datagram['SY'], datagram['SZ'])
+        sv @= quat.Rotator(pi/180 * self._zero['EX'], 0, 0, 1)
+        datagram['SX'], datagram['SY'], datagram['SZ'] = sv.xyz
+        return datagram
+
     def calibrate(self, *args, **kwargs):
         self.autoDetectMugicType()
         super().calibrate(*args, **kwargs)
@@ -610,6 +623,9 @@ class MugicDevice(IMUController):
         self._zero['calib_accel'] = 0
         self._zero['calib_gyro'] = 0
         self._zero['calib_mag'] = 0
+        self._zero['SX'] = 0
+        self._zero['SY'] = 0
+        self._zero['SZ'] = 0
 
 # mock mugic device - used to simulate a mugic device
 class MockMugicDevice(MugicDevice):
@@ -791,7 +807,7 @@ class IMUDisplay:
         # objects to draw
         self._image_cube = graph3d.Cube(Color.magenta, Color.cyan, Color.orange)
         self._image_cube += (-0.5, -0.5, -0.5)
-        self._image_accel = graph3d.Axis(Color.red, width = 2)
+        self._image_accel = graph3d.Axis(Color.red, width = 2, p1=(1, 1, 1))
         self._image_gyro = graph3d.Axis(Color.blue, width = 2)
         self._image_magnet = graph3d.Axis(Color.white, width = 2) * (0.1, 0.1, 0.1)
         self._image_facing = graph3d.Axis(Color.magenta, width = 2, p1=self._imu.orientation)
@@ -819,14 +835,14 @@ class IMUDisplay:
         self._image.fill(Color.black)
         if not self._imu.connected():
             pygame.draw.circle(self._image,
-                               Color.green,
+                               Color.red,
                                (w-w//16, h-h//16),
                                max(w//64, 3))
             self._camera.show(self._image, "axes")
             return self._image
         else:
             pygame.draw.circle(self._image,
-                               Color.red,
+                               Color.green,
                                (w-w//16, h-h//16),
                                max(w//64, 3))
         # apply datagram transformations
@@ -839,9 +855,9 @@ class IMUDisplay:
                     datagram['QY'],
                     datagram['QZ'])
             accel_data = quat.Vector(
-                    _log_scale(datagram['AX']),
-                    _log_scale(datagram['AY']),
-                    _log_scale(datagram['AZ']))
+                    datagram['AX'] * 0.1,
+                    datagram['AY'] * 0.1,
+                    datagram['AZ'] * 0.1)
             magnet_data = quat.Vector(
                     _log_scale(datagram['MX']),
                     _log_scale(datagram['MY']),
@@ -851,10 +867,11 @@ class IMUDisplay:
                     _log_scale(datagram['GY']/60.0),
                     _log_scale(datagram['GZ']/60.0))
             #print(quat.euler(data_quat))
-            #data_quat = data_quat.normalise() # cause
-            self._camera["accel"] = self._image_accel * accel_data
-            self._camera["gyro"] = self._image_gyro * gyro_data
-            self._camera["compass"] = self._image_magnet * magnet_data
+            #data_quat = data_quat.normalise()
+            self._camera["accel"] = self._image_accel * accel_data.xyz \
+                    @ data_quat
+            self._camera["gyro"] = self._image_gyro * gyro_data.xyz
+            self._camera["compass"] = self._image_magnet * magnet_data.xyz
             self._camera["cube"] = self._image_cube * self._imu.dimensions\
                     @ data_quat
             self._camera["facing"] = self._image_facing @ data_quat
@@ -882,10 +899,16 @@ class IMUDisplay:
         if datagram is None:
             datagram = self._imu.peekDatagram()
         if datagram is not None:
-            accel_data = (
-                    datagram['AX'],
-                    datagram['AY'],
-                    datagram['AZ'])
+            if 'SX' in datagram:
+                accel_data = (
+                        datagram['SX'],
+                        datagram['SY'],
+                        datagram['SZ'])
+            else:
+                accel_data = (
+                        datagram['AX'],
+                        datagram['AY'],
+                        datagram['AZ'])
             magnet_data = quat.Vector(
                     _log_scale(datagram['MX']),
                     _log_scale(datagram['MY']),
@@ -947,7 +970,10 @@ class IMUDisplay:
                 .format(md['QW'], md['QX'], md['QY'], md['QZ'])
         data_row = "{:>6.2f}, {:>6.2f}, {:>6.2f}"
         euler = data_row.format(md['EX'], md['EY'], md['EZ'])
-        accel = data_row.format(md['AX'], md['AY'], md['AZ'])
+        if 'SX' in md:
+            accel = data_row.format(md['SX'], md['SY'], md['SZ'])
+        else:
+            accel = data_row.format(md['AX'], md['AY'], md['AZ'])
         gyro = data_row.format(md['GX'], md['GY'], md['GZ'])
         mag = data_row.format(md['MX'], md['MY'], md['MZ'])
         battery_and_mv = "{:5.2f} {}mV".format(
@@ -1087,11 +1113,11 @@ def _viewMugicDevice(mugic_device):
         elif state[pygame.K_r]:
             mugic_display.resetImage()
         elif state[pygame.K_c]:
-            mugic_device.calibrate(*last_datagram)
+            mugic_device.calibrate()
             frames = 0
             ticks = pygame.time.get_ticks() - 1
 
-        next_datagram = mugic_device.next()
+        next_datagram = mugic_device.next(raw=False)
         if next_datagram is not None and next_datagram.values() != last_datagram:
             last_datagram = list(next_datagram.values())
             frames += 1
