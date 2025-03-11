@@ -517,11 +517,14 @@ class IMUController(IMU):
         if datagram is None: return (0, 0, 0)
         return self.accel(datagram).scalar_project(self._pointing_at(datagram))
 
-    # acceleration orthogonal to the direction of pointing
+    # acceleration not in the direction of pointing
     def swingAccel(self, datagram):
         if datagram is None: datagram = self.next()
         if datagram is None: return (0, 0, 0)
-        return abs(self.accel(datagram)) - self.thrustAccel(datagram)
+        # we divide by 2 b/c there are two axes
+        # this makes the data make more sense
+        return (abs(self.accel(datagram)) - self.thrustAccel(datagram)) / 2.0
+
 
 class MugicDevice(IMUController):
     # Datagram signature
