@@ -966,6 +966,7 @@ Mugic Controls:
         super().start()
 
     def _controls(self):
+        # Mugic Controls
         if self.mugic_player_1.connected() and not self.p1_CPU:
             if not self.p1_jolt:
                 self.striker_right._moveTowardsPoint(self.p1_y)
@@ -983,6 +984,7 @@ Mugic Controls:
             else:
                 self.p2_jolt = not (self.striker_left._moveTowardsNormal() and
                                     self.striker_left._rotateTowardsNormal())
+        # Non-Mugic Controls
         if not self.p1_jolt or self.p1_CPU:
             self._handle_p1_controls()
         if not self.p2_jolt or self.p2_CPU:
@@ -991,7 +993,7 @@ Mugic Controls:
             self.p2_jolt = False
 
     def _update(self):
-        # drawing is expensive, so we only do them every few frames
+        # drawing is expensive, so we only do it every few frames
         if self._frame_count % 20 == 0:
             self._insert_mugic_image()
         self._insert_mugic_text()

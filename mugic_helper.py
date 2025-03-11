@@ -17,6 +17,7 @@ import math
 from math import pi
 from collections import deque
 import quaternion.quat as quat
+import quaternion.vector as vec
 import quaternion.graph3d as graph3d
 from array import array
 
@@ -32,11 +33,7 @@ def _log_scale(number):
     sign = -1 if number < 0 else 1
     return (math.log(abs(number)+1)/3.0) * sign
 
-def normalise_point(point):
-    magnitude = math.sqrt(sum([p**2 for p in point]))
-    return tuple([p/magnitude for p in point])
-
-# Base Classes
+## Base Classes ##
 
 # interface for a generic IMU device
 class IMU:
@@ -193,12 +190,17 @@ class IMU:
     @staticmethod
     def accel(datagram):
         if datagram is None: return None
-        return [datagram['AX'], datagram['AY'], datagram['AZ']]
+        return vec.Vector(datagram['AX'], datagram['AY'], datagram['AZ'])
 
     @staticmethod
     def gyro(datagram):
         if datagram is None: return None
-        return [datagram['GX'], datagram['GY'], datagram['GZ']]
+        return  vec.Vector(datagram['GX'], datagram['GY'], datagram['GZ'])
+
+    @staticmethod
+    def mag(datagram):
+        if datagram is None: return None
+        return  vec.Vector(datagram['MX'], datagram['MY'], datagram['MZ'])
 
     @staticmethod
     def quat(datagram):
@@ -208,7 +210,19 @@ class IMU:
     @staticmethod
     def euler(datagram):
         if datagram is None: return None
-        return [datagram['EX'], datagram['EY'], datagram['EZ']]
+        return vec.Vector(datagram['EX'], datagram['EY'], datagram['EZ'])
+
+    # converts the IMU's quaternion orientation to what point it is facing
+    def _pointing_at(self, datagram):
+        if datagram is None: return (0, 0, 0)
+        data_quat = IMU.to_quaternion(datagram).normalise()
+        unit_vector = quat.Vector(*self.orientation) @ data_quat
+        return vec.Vector(*unit_vector.xyz)
+
+    def pointingAt(self, datagram=None):
+        if datagram is None: datagram = self.next()
+        return self._pointing_at(datagram)
+
 
 # IMUController interface
 # Methods:
@@ -311,17 +325,6 @@ class IMUController(IMU):
             return left <= angle or angle <= right
         return angle >= left and angle <= right
 
-    # converts the IMU's quaternion orientation to what point it is facing
-    def _pointing_at(self, datagram):
-        if datagram is None: return (0, 0, 0)
-        data_quat = IMU.to_quaternion(datagram).normalise()
-        unit_vector = quat.Vector(*self.orientation) @ data_quat
-        return unit_vector.xyz
-
-    def pointingAt(self, datagram=None):
-        if datagram is None: datagram = self.next()
-        return self._pointing_at(datagram)
-
     # alternative approach to facing using quaternions
     def _pointing(self, point, threshold=0.70, datagram=None, pointing_at=None):
         if pointing_at is None and datagram is None:
@@ -376,10 +379,10 @@ class IMUController(IMU):
     def pointingRight(self, **kwargs): return self._pointing((0, -1, 0), **kwargs)
     def pointingLeft(self, **kwargs): return self._pointing((0, 1, 0), **kwargs)
 
-    def jolted(self, threshold=10):
-        datagram = self.next()
-        move_magnitude = math.sqrt(sum([a*a for a in IMU.accel(datagram)]))
-        if move_magnitude > threshold: return True
+    def jolted(self, threshold=10, datagram=None):
+        if datagram is None:
+            datagram = self.next()
+        if abs(self.accel(datagram)) > threshold: return True
         return False
 
     # combination functions
@@ -478,7 +481,7 @@ class IMUController(IMU):
     # returns which quadrant is being pointed at
     def pointing(self, text=False, **kwargs):
         if "datagram" not in kwargs: kwargs["datagram"] = self.next()
-        pointing_at = normalise_point(self._pointing_at(kwargs["datagram"]))
+        pointing_at = self._pointing_at(kwargs["datagram"]).normalise()
         if "pointing_at" not in kwargs: kwargs["pointing_at"] = pointing_at
         pointing_bits = 0
         if self.pointingUp(**kwargs): pointing_bits += 0b1
@@ -501,6 +504,24 @@ class IMUController(IMU):
         if pointing_bits & (1<<4): text.append("FW")
         if pointing_bits & (1<<5): text.append("BW")
         return text
+
+    # TODO
+    # * acceleration in direction of pointing
+    # * low-pass acceleration filter
+    # * acceleration frame (black and white) output
+    # * acceleration frame interpretation
+
+    # acceleration in the direction of pointing
+    def thrustAccel(self, datagram):
+        if datagram is None: datagram = self.next()
+        if datagram is None: return (0, 0, 0)
+        return self.accel(datagram).scalar_project(self._pointing_at(datagram))
+
+    # acceleration orthogonal to the direction of pointing
+    def swingAccel(self, datagram):
+        if datagram is None: datagram = self.next()
+        if datagram is None: return (0, 0, 0)
+        return abs(self.accel(datagram)) - self.thrustAccel(datagram)
 
 class MugicDevice(IMUController):
     # Datagram signature
@@ -541,13 +562,16 @@ class MugicDevice(IMUController):
                     datagram['AX'], datagram['AY'], datagram['AZ'])
             absolute_accel @= IMU.to_quaternion(datagram)
             absolute_accel @= quat.Rotator(pi/2, 0, 0, 1)
-            datagram['SX'], datagram['SY'], datagram['SZ'] = absolute_accel.xyz
+            datagram['SY'], datagram['SX'], datagram['SZ'] = absolute_accel.xyz
+            # Mugic 2.0 accelerometer contains gravity
             datagram['SZ'] -= GRAVITY
         else: # Mugic 1.0 - yaw is inverted
-            # fit accelerometer data to local frame of reference
-            accel_vector = quat.Vector(datagram['AX'], datagram['AY'], datagram['AZ'])
-            datagram['AX'], datagram['AY'], datagram['AZ'] = accel_vector.xyz
             # ref: https://gamedev.stackexchange.com/questions/201977
+            absolute_accel = quat.Vector(
+                    datagram['AX'], datagram['AY'], datagram['AZ'])
+            absolute_accel @= IMU.to_quaternion(datagram)
+            absolute_accel @= quat.Rotator(pi/2, 0, 0, 1)
+            datagram['SY'], datagram['SX'], datagram['SZ'] = absolute_accel.xyz
             datagram['QZ'], datagram['QX'] = -datagram['QZ'], -datagram['QX']
             datagram['EY'] = -datagram['EY']
             datagram['GX'], datagram['GZ'] = datagram['GZ'], -datagram['GX']
@@ -626,6 +650,19 @@ class MugicDevice(IMUController):
         self._zero['SX'] = 0
         self._zero['SY'] = 0
         self._zero['SZ'] = 0
+
+    @staticmethod
+    def rawAccel(datagram):
+        return super().accel(datagram)
+
+    @staticmethod
+    def normAccel(datagram):
+        if datagram is None: return None
+        return vec.Vector(datagram['SX'], datagram['SY'], datagram['SZ'])
+
+    @staticmethod
+    def accel(datagram):
+        return MugicDevice.normAccel(datagram)
 
 # mock mugic device - used to simulate a mugic device
 class MockMugicDevice(MugicDevice):
@@ -808,8 +845,8 @@ class IMUDisplay:
         self._image_cube = graph3d.Cube(Color.magenta, Color.cyan, Color.orange)
         self._image_cube += (-0.5, -0.5, -0.5)
         self._image_accel = graph3d.Axis(Color.red, width = 2, p1=(1, 1, 1))
-        self._image_gyro = graph3d.Axis(Color.blue, width = 2)
-        self._image_magnet = graph3d.Axis(Color.white, width = 2) * (0.1, 0.1, 0.1)
+        self._image_gyro = graph3d.Axis(Color.blue, width = 2, p1=(1, 1, 1))
+        self._image_magnet = graph3d.Axis(Color.white, width = 2, p1=(1, 1, 1)) * (0.1, 0.1, 0.1)
         self._image_facing = graph3d.Axis(Color.magenta, width = 2, p1=self._imu.orientation)
         self._image_axes = graph3d.PositiveAxes(Color.red, Color.green, Color.blue)
         # camera initialization
@@ -849,23 +886,10 @@ class IMUDisplay:
         if datagram is None:
             datagram = self._imu.peekDatagram()
         if datagram is not None:
-            data_quat = quat.Quaternion(
-                    datagram['QW'],
-                    datagram['QX'],
-                    datagram['QY'],
-                    datagram['QZ'])
-            accel_data = quat.Vector(
-                    datagram['AX'] * 0.1,
-                    datagram['AY'] * 0.1,
-                    datagram['AZ'] * 0.1)
-            magnet_data = quat.Vector(
-                    _log_scale(datagram['MX']),
-                    _log_scale(datagram['MY']),
-                    _log_scale(datagram['MZ']))
-            gyro_data = quat.Vector(
-                    _log_scale(datagram['GX']/60.0),
-                    _log_scale(datagram['GY']/60.0),
-                    _log_scale(datagram['GZ']/60.0))
+            data_quat = self._imu.quat(datagram)
+            accel_data = self._imu.accel(datagram) * 0.1
+            magnet_data =  self._imu.mag(datagram) / 30
+            gyro_data = self._imu.gyro(datagram) / 1080
             #print(quat.euler(data_quat))
             #data_quat = data_quat.normalise()
             self._camera["accel"] = self._image_accel * accel_data.xyz \
@@ -899,24 +923,12 @@ class IMUDisplay:
         if datagram is None:
             datagram = self._imu.peekDatagram()
         if datagram is not None:
-            if 'SX' in datagram:
-                accel_data = (
-                        datagram['SX'],
-                        datagram['SY'],
-                        datagram['SZ'])
-            else:
-                accel_data = (
-                        datagram['AX'],
-                        datagram['AY'],
-                        datagram['AZ'])
+            accel_data = self._imu.accel(datagram)
             magnet_data = quat.Vector(
                     _log_scale(datagram['MX']),
                     _log_scale(datagram['MY']),
                     _log_scale(datagram['MZ']))
-            gyro_data = (
-                    datagram['GX'],
-                    datagram['GY'],
-                    datagram['GZ'])
+            gyro_data =  self._imu.gyro(datagram)
             # draw acceleration values
             accel_points = [self._norm_graph_val(
                 val,
@@ -931,6 +943,7 @@ class IMUDisplay:
             colors = [Color.red, Color.green, Color.blue]
             for point, color in zip(accel_points, colors):
                 self._action_image.fill(color, (point, (1, 3)))
+            self._action_image.fill(color, (point, (1, 3)))
             # draw gyroscope values
             gyro_points = [self._norm_graph_val(
                 val,
@@ -960,6 +973,7 @@ class IMUDisplay:
         self._data_format_text = '\n'.join(
             [value+": {}" for value in data_labels])
         self._action_format_text = "Moving: {}\nRotating: {}\n"
+        self._action_format_text += "Thrust: {:>6.2f}, Swing:{:>6.2f}\n"
         self._action_format_text += "Pointing: {:3s}\nYaw {:3s} Pitch {:3s} Roll {:3s}"
 
     def getDataText(self):
@@ -997,9 +1011,13 @@ class IMUDisplay:
         pitching = ", ".join(self._imu.pitching(text=True, datagram=datagram))
         rolling = ", ".join(self._imu.rolling(text=True, datagram=datagram))
         pointing = ", ".join(self._imu.pointing(text=True, datagram=datagram))
-        self._action_text = self._action_format_text.format(moving, rotating,
-                                                            pointing, yawing,
-                                                            pitching, rolling)
+        thrust = self._imu.thrustAccel(datagram=datagram)
+        swing = self._imu.swingAccel(datagram=datagram)
+        self._action_text = self._action_format_text\
+                .format(moving, rotating,
+                        thrust, swing,
+                        pointing, yawing,
+                        pitching, rolling)
         return self._action_text
 
 
