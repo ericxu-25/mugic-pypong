@@ -191,26 +191,30 @@ class IMU:
         if datagram is None: return None
         return vec.Vector(datagram['AX'], datagram['AY'], datagram['AZ'])
 
-    @staticmethod
-    def absoluteAccel(datagram):
+    def absoluteAccel(self, datagram, raw=False):
         if datagram is None: return None
         quat_rot = IMU.to_quaternion(datagram)
-        absolute_accel = quat.Vector(
+        accel = quat.Vector(
                 datagram['AX'], datagram['AY'], datagram['AZ'])
-        return vec.Vector(*(absolute_accel @ quat_rot).xyz)
+        if not raw:
+            zero_heading = quat.Rotator(pi/180 * self._zero['EX'], 0, 0, 1)
+            accel @= zero_heading
+        return vec.Vector(*(accel @ quat_rot).xyz)
 
     @staticmethod
     def gyro(datagram):
         if datagram is None: return None
         return  vec.Vector(datagram['GX'], datagram['GY'], datagram['GZ'])
 
-    @staticmethod
-    def absoluteGyro(datagram):
+    def absoluteGyro(self, datagram, raw=False):
         if datagram is None: return None
         quat_rot = IMU.to_quaternion(datagram)
-        absolute_gyro = quat.Vector(
+        gyro = quat.Vector(
                 datagram['GX'], datagram['GY'], datagram['GZ'])
-        return vec.Vector(*(absolute_gyro @ quat_rot).xyz)
+        if not raw:
+            zero_heading = quat.Rotator(pi/180 * self._zero['EX'], 0, 0, 1)
+            gyro @= zero_heading
+        return vec.Vector(*(gyro @ quat_rot).xyz)
 
     @staticmethod
     def mag(datagram):
@@ -563,7 +567,7 @@ class IMUController(IMU):
 
 class MugicDevice(IMUController):
     # Datagram signature
-    types = [float if t == 'f' else int for t in 'fffffffffffffffffiiiiififfffff']
+    types = [float if t == 'f' else int for t in 'fffffffffffffffffiiiiifi']
     # Datagram structure
     datagram = (
         'AX', 'AY', 'AZ', # accelerometer
@@ -575,9 +579,6 @@ class MugicDevice(IMUController):
         'calib_sys', 'calib_gyro', 'calib_accel', 'calib_mag', # Calibration state
         'seconds', # since last reboot
         'seqnum', # messagesequence number
-        # parts below calculated in update_state
-        'SX', 'SY', 'SZ', # absolute acceleration
-        'RX', 'RY', 'RZ', # absolute gyrometer
     )
     orientation  = (1, 0, 0)
     dimensions = (0.8, 0.5, 0.2)
@@ -591,30 +592,18 @@ class MugicDevice(IMUController):
         return
 
     def _update_state(self, datagram):
-        datagram = super()._update_state(datagram)
-        if self.legacy: # Mugic 1.0 - yaw is inverted
+        if self.legacy: # Mugic 1.0 - x rot is inverted
             # ref: https://gamedev.stackexchange.com/questions/201977
             datagram['QZ'], datagram['QX'] = -datagram['QZ'], -datagram['QX']
             datagram['EY'] = -datagram['EY']
-        # below we append the additional absolute axis readings
-        # converting acceleration to absolute acceleration
-        quat_rot = IMU.to_quaternion(datagram)
-        accel = quat.Vector(
+        if not self.legacy: # Mugic 2.0 - accel has gravity
+            quat_rot = IMU.to_quaternion(datagram)
+            accel = quat.Vector(
                 datagram['AX'], datagram['AY'], datagram['AZ'])
-        absolute_accel = accel.copy()
-        absolute_accel @= quat_rot
-        datagram['SX'], datagram['SY'], datagram['SZ'] = absolute_accel.xyz
-        # converting gyrometer to absolute gyrometer
-        absolute_gyro = quat.Vector(
-                datagram['GX'], datagram['GY'], datagram['GZ'])
-        absolute_gyro @= quat_rot
-        datagram['RX'], datagram['RY'], datagram['RZ'] = absolute_gyro.xyz
-        if not self.legacy: # Mugic 2.0 accel has gravity
-            datagram['EZ'] = -datagram['EZ']
-            # Mugic 2.0 accelerometer contains gravity
-            datagram['SZ'] -= GRAVITY
             accel -= (quat.Vector(0, 0, GRAVITY) @ quat_rot.inverse())
             datagram['AX'], datagram['AY'], datagram['AZ'] = accel.xyz
+            datagram['EZ'] = -datagram['EZ']
+        datagram = super()._update_state(datagram)
         return datagram
 
     def _mugic_init(self):
@@ -670,15 +659,6 @@ class MugicDevice(IMUController):
         datagram = super()._calibrate(datagram)
         # zero the absolute accel/gyro to the zero facing
         # this means rotating both on the z axis since orientation is defined on x,y
-        zero_heading = quat.Rotator(pi/180 * self._zero['EX'], 0, 0, 1)
-        # the absolute accel by default follows east/north (I think)
-        sv = quat.Vector(datagram['SX'], datagram['SY'], datagram['SZ'])
-        sv @= zero_heading
-        datagram['SX'], datagram['SY'], datagram['SZ'] = sv.xyz
-        # the absolute gyro
-        rv = quat.Vector(datagram['RX'], datagram['RY'], datagram['RZ'])
-        rv @= zero_heading
-        datagram['RX'], datagram['RY'], datagram['RZ'] = rv.xyz
         return datagram
 
     def calibrate(self, *args, **kwargs):
@@ -694,6 +674,18 @@ class MugicDevice(IMUController):
         self._zero['calib_gyro'] = 0
         self._zero['calib_mag'] = 0
 
+    def absoluteAccel(self, datagram, raw=False):
+        if datagram is None: return None
+        if self.legacy:
+            return super().accel(datagram)
+        return super().absoluteAccel(datagram, raw)
+
+    def absoluteGyro(self, datagram, raw=False):
+        if datagram is None: return None
+        if self.legacy: # Revert Mugic 1.0 quat changes
+            datagram = datagram.copy()
+            datagram['QX'], datagram['QZ'] = -datagram['QX'], -datagram['QZ']
+        return super().absoluteGyro(datagram, raw)
 
 # mock mugic device - used to simulate a mugic device
 class MockMugicDevice(MugicDevice):
@@ -954,9 +946,10 @@ class IMUDisplay:
         if datagram is None:
             datagram = self._imu.peekDatagram()
         if datagram is not None:
-            accel_data = IMUController.accel(datagram)
             #accel_data = self._imu.accel(datagram)
-            gyro_data =  self._imu.gyro(datagram)
+            #gyro_data =  self._imu.gyro(datagram)
+            accel_data = self._imu.absoluteAccel(datagram)
+            gyro_data =  self._imu.absoluteGyro(datagram)
             # draw acceleration values
             accel_points = [self._norm_graph_val(
                 val,
@@ -1011,15 +1004,8 @@ class IMUDisplay:
                 .format(md['QW'], md['QX'], md['QY'], md['QZ'])
         data_row = "{:>6.2f}, {:>6.2f}, {:>6.2f}"
         euler = data_row.format(md['EX'], md['EY'], md['EZ'])
-        # use absolute accel and absolute gyro if provided
-        if 'SX' in md:
-            accel = data_row.format(md['SX'], md['SY'], md['SZ'])
-        else:
-            accel = data_row.format(md['AX'], md['AY'], md['AZ'])
-        if 'RX' in md:
-            gyro = data_row.format(md['RX'], md['RY'], md['RZ'])
-        else:
-            gyro= data_row.format(md['GX'], md['GY'], md['GZ'])
+        accel = data_row.format(md['AX'], md['AY'], md['AZ'])
+        gyro= data_row.format(md['GX'], md['GY'], md['GZ'])
         mag = data_row.format(md['MX'], md['MY'], md['MZ'])
         battery_and_mv = "{:5.2f} {}mV".format(
                 md['Battery'], md['mV'])
