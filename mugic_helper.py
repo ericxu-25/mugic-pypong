@@ -34,7 +34,6 @@ def _log_scale(number):
     return (math.log(abs(number)+1)/3.0) * sign
 
 ## Base Classes ##
-
 # interface for a generic IMU device
 class IMU:
     # assumes 9-axis Datagram structure
@@ -143,7 +142,7 @@ class IMU:
         return datagram
 
     # returns smoothed datagram via moving average
-    # might want to look into madgwick/kalman filter in the future
+    # might want to look into madgwick/kalman filter in the future?
     def _smooth(self, datagrams, raw=False):
         if len(datagrams) == 1:
             if raw: return datagrams[0].copy()
@@ -193,9 +192,25 @@ class IMU:
         return vec.Vector(datagram['AX'], datagram['AY'], datagram['AZ'])
 
     @staticmethod
+    def absoluteAccel(datagram):
+        if datagram is None: return None
+        quat_rot = IMU.to_quaternion(datagram)
+        absolute_accel = quat.Vector(
+                datagram['AX'], datagram['AY'], datagram['AZ'])
+        return vec.Vector(*(absolute_accel @ quat_rot).xyz)
+
+    @staticmethod
     def gyro(datagram):
         if datagram is None: return None
         return  vec.Vector(datagram['GX'], datagram['GY'], datagram['GZ'])
+
+    @staticmethod
+    def absoluteGyro(datagram):
+        if datagram is None: return None
+        quat_rot = IMU.to_quaternion(datagram)
+        absolute_gyro = quat.Vector(
+                datagram['GX'], datagram['GY'], datagram['GZ'])
+        return vec.Vector(*(absolute_gyro @ quat_rot).xyz)
 
     @staticmethod
     def mag(datagram):
@@ -229,8 +244,13 @@ class IMU:
 # * next() -> get next datagram, None if disconnected
 # * variety of state querying commands
 # Future Methods to implement:
-# * compassAngle
+# * compassAngle - get compass direction with magnetometer
 class IMUController(IMU):
+    # configuration values
+    # * accel_low_pass
+    # * gyro_low_pass
+    # * max_frame_size
+
     def __init__(self, buffer_size=10):
         super().__init__(buffer_size)
         self._connected = False
@@ -339,10 +359,10 @@ class IMUController(IMU):
         return distance < threshold
 
     # interface methods
-    def movingUp(self, **kwargs): return self._moving(1, 1, **kwargs)
-    def movingDown(self, **kwargs): return self._moving(1, -1, **kwargs)
-    def movingRight(self, **kwargs): return self._moving(2, 1, **kwargs)
-    def movingLeft(self, **kwargs): return self._moving(2, -1, **kwargs)
+    def movingUp(self, **kwargs): return self._moving(2, 1, **kwargs)
+    def movingDown(self, **kwargs): return self._moving(2, -1, **kwargs)
+    def movingRight(self, **kwargs): return self._moving(1, 1, **kwargs)
+    def movingLeft(self, **kwargs): return self._moving(1, -1, **kwargs)
     def movingForward(self, **kwargs): return self._moving(0, 1, **kwargs)
     def movingBackward(self, **kwargs): return self._moving(0, -1, **kwargs)
 
@@ -515,20 +535,35 @@ class IMUController(IMU):
     def thrustAccel(self, datagram):
         if datagram is None: datagram = self.next()
         if datagram is None: return (0, 0, 0)
-        return self.accel(datagram).scalar_project(self._pointing_at(datagram))
+        return datagram['AX']
+        #return self.accel(datagram).scalar_project(self._pointing_at(datagram))
 
     # acceleration not in the direction of pointing
     def swingAccel(self, datagram):
         if datagram is None: datagram = self.next()
         if datagram is None: return (0, 0, 0)
-        # we divide by 2 b/c there are two axes
-        # this makes the data make more sense
-        return (abs(self.accel(datagram)) - self.thrustAccel(datagram)) / 2.0
+        return (datagram['AY'] + datagram['AZ'])/2
+        #return (abs(self.accel(datagram)) - self.thrustAccel(datagram)) / 2.0
 
+    # adjusted relative rotation values
+    def forwardRotation(self, datagram):
+        if datagram is None: datagram = self.next()
+        if datagram is None: return 0
+        return abs(datagram['GY'])
+
+    def twistingRotation(self, datagram):
+        if datagram is None: datagram = self.next()
+        if datagram is None: return 0
+        return abs(datagram['GX'])
+
+    def turningRotation(self, datagram):
+        if datagram is None: datagram = self.next()
+        if datagram is None: return 0
+        return abs(datagram['GZ'])
 
 class MugicDevice(IMUController):
     # Datagram signature
-    types = [float if t == 'f' else int for t in 'fffffffffffffffffiiiiififffffffff']
+    types = [float if t == 'f' else int for t in 'fffffffffffffffffiiiiififfffff']
     # Datagram structure
     datagram = (
         'AX', 'AY', 'AZ', # accelerometer
@@ -540,7 +575,9 @@ class MugicDevice(IMUController):
         'calib_sys', 'calib_gyro', 'calib_accel', 'calib_mag', # Calibration state
         'seconds', # since last reboot
         'seqnum', # messagesequence number
+        # parts below calculated in update_state
         'SX', 'SY', 'SZ', # absolute acceleration
+        'RX', 'RY', 'RZ', # absolute gyrometer
     )
     orientation  = (1, 0, 0)
     dimensions = (0.8, 0.5, 0.2)
@@ -555,30 +592,29 @@ class MugicDevice(IMUController):
 
     def _update_state(self, datagram):
         datagram = super()._update_state(datagram)
-        # Differences between Mugic 1.0 and Mugic 2.0
-        # also - we fit the values to a different frame of reference
-        if not self.legacy: # Mugic 2.0
-            datagram['EZ'] = -datagram['EZ']
-            datagram['GX'], datagram['GZ'] = -datagram['GZ'], datagram['GX']
-            # converting acceleration to absolute acceleration
-            absolute_accel = quat.Vector(
-                    datagram['AX'], datagram['AY'], datagram['AZ'])
-            absolute_accel @= IMU.to_quaternion(datagram)
-            absolute_accel @= quat.Rotator(pi/2, 0, 0, 1)
-            datagram['SY'], datagram['SX'], datagram['SZ'] = absolute_accel.xyz
-            # Mugic 2.0 accelerometer contains gravity
-            datagram['SZ'] -= GRAVITY
-        else: # Mugic 1.0 - yaw is inverted
+        if self.legacy: # Mugic 1.0 - yaw is inverted
             # ref: https://gamedev.stackexchange.com/questions/201977
-            absolute_accel = quat.Vector(
-                    datagram['AX'], datagram['AY'], datagram['AZ'])
-            absolute_accel @= IMU.to_quaternion(datagram)
-            absolute_accel @= quat.Rotator(pi/2, 0, 0, 1)
-            datagram['SY'], datagram['SX'], datagram['SZ'] = absolute_accel.xyz
             datagram['QZ'], datagram['QX'] = -datagram['QZ'], -datagram['QX']
             datagram['EY'] = -datagram['EY']
-            datagram['GX'], datagram['GZ'] = datagram['GZ'], -datagram['GX']
-        datagram['GY'] = -datagram['GY']
+        # below we append the additional absolute axis readings
+        # converting acceleration to absolute acceleration
+        quat_rot = IMU.to_quaternion(datagram)
+        accel = quat.Vector(
+                datagram['AX'], datagram['AY'], datagram['AZ'])
+        absolute_accel = accel.copy()
+        absolute_accel @= quat_rot
+        datagram['SX'], datagram['SY'], datagram['SZ'] = absolute_accel.xyz
+        # converting gyrometer to absolute gyrometer
+        absolute_gyro = quat.Vector(
+                datagram['GX'], datagram['GY'], datagram['GZ'])
+        absolute_gyro @= quat_rot
+        datagram['RX'], datagram['RY'], datagram['RZ'] = absolute_gyro.xyz
+        if not self.legacy: # Mugic 2.0 accel has gravity
+            datagram['EZ'] = -datagram['EZ']
+            # Mugic 2.0 accelerometer contains gravity
+            datagram['SZ'] -= GRAVITY
+            accel -= (quat.Vector(0, 0, GRAVITY) @ quat_rot.inverse())
+            datagram['AX'], datagram['AY'], datagram['AZ'] = accel.xyz
         return datagram
 
     def _mugic_init(self):
@@ -632,10 +668,17 @@ class MugicDevice(IMUController):
 
     def _calibrate(self, datagram):
         datagram = super()._calibrate(datagram)
-        # the absolute accel by default follows east/north
+        # zero the absolute accel/gyro to the zero facing
+        # this means rotating both on the z axis since orientation is defined on x,y
+        zero_heading = quat.Rotator(pi/180 * self._zero['EX'], 0, 0, 1)
+        # the absolute accel by default follows east/north (I think)
         sv = quat.Vector(datagram['SX'], datagram['SY'], datagram['SZ'])
-        sv @= quat.Rotator(pi/180 * self._zero['EX'], 0, 0, 1)
+        sv @= zero_heading
         datagram['SX'], datagram['SY'], datagram['SZ'] = sv.xyz
+        # the absolute gyro
+        rv = quat.Vector(datagram['RX'], datagram['RY'], datagram['RZ'])
+        rv @= zero_heading
+        datagram['RX'], datagram['RY'], datagram['RZ'] = rv.xyz
         return datagram
 
     def calibrate(self, *args, **kwargs):
@@ -650,22 +693,7 @@ class MugicDevice(IMUController):
         self._zero['calib_accel'] = 0
         self._zero['calib_gyro'] = 0
         self._zero['calib_mag'] = 0
-        self._zero['SX'] = 0
-        self._zero['SY'] = 0
-        self._zero['SZ'] = 0
 
-    @staticmethod
-    def rawAccel(datagram):
-        return super().accel(datagram)
-
-    @staticmethod
-    def normAccel(datagram):
-        if datagram is None: return None
-        return vec.Vector(datagram['SX'], datagram['SY'], datagram['SZ'])
-
-    @staticmethod
-    def accel(datagram):
-        return MugicDevice.normAccel(datagram)
 
 # mock mugic device - used to simulate a mugic device
 class MockMugicDevice(MugicDevice):
@@ -926,11 +954,8 @@ class IMUDisplay:
         if datagram is None:
             datagram = self._imu.peekDatagram()
         if datagram is not None:
-            accel_data = self._imu.accel(datagram)
-            magnet_data = quat.Vector(
-                    _log_scale(datagram['MX']),
-                    _log_scale(datagram['MY']),
-                    _log_scale(datagram['MZ']))
+            accel_data = IMUController.accel(datagram)
+            #accel_data = self._imu.accel(datagram)
             gyro_data =  self._imu.gyro(datagram)
             # draw acceleration values
             accel_points = [self._norm_graph_val(
@@ -961,7 +986,6 @@ class IMUDisplay:
             colors = [Color.cyan, Color.magenta, Color.yellow]
             for point, color in zip(gyro_points, colors):
                 self._action_image.fill(color, (point, (1, 3)))
-
         # scroll graphs to the left
         self._ag_graph_surface.scroll(dx=1)
         self._gg_graph_surface.scroll(dx=1)
@@ -974,7 +998,7 @@ class IMUDisplay:
                       " gyro", " magn",
                       "battery", "frame", "calib (SAGM)"]
         self._data_format_text = '\n'.join(
-            [value+": {}" for value in data_labels])
+                [value+": {}" for value in data_labels])
         self._action_format_text = "Moving: {}\nRotating: {}\n"
         self._action_format_text += "Thrust: {:>6.2f}, Swing:{:>6.2f}\n"
         self._action_format_text += "Pointing: {:3s}\nYaw {:3s} Pitch {:3s} Roll {:3s}"
@@ -987,18 +1011,22 @@ class IMUDisplay:
                 .format(md['QW'], md['QX'], md['QY'], md['QZ'])
         data_row = "{:>6.2f}, {:>6.2f}, {:>6.2f}"
         euler = data_row.format(md['EX'], md['EY'], md['EZ'])
+        # use absolute accel and absolute gyro if provided
         if 'SX' in md:
             accel = data_row.format(md['SX'], md['SY'], md['SZ'])
         else:
             accel = data_row.format(md['AX'], md['AY'], md['AZ'])
-        gyro = data_row.format(md['GX'], md['GY'], md['GZ'])
+        if 'RX' in md:
+            gyro = data_row.format(md['RX'], md['RY'], md['RZ'])
+        else:
+            gyro= data_row.format(md['GX'], md['GY'], md['GZ'])
         mag = data_row.format(md['MX'], md['MY'], md['MZ'])
         battery_and_mv = "{:5.2f} {}mV".format(
                 md['Battery'], md['mV'])
         frame = md['seqnum']
         calib_status = " & ".join(
                 [":(" if md[c] < 1.0 else ":|" if md[c] < 2.0 else ":)" if md[c] < 3.0 else ":D"
-                for c in ['calib_sys', 'calib_accel', 'calib_gyro', 'calib_mag']])
+                 for c in ['calib_sys', 'calib_accel', 'calib_gyro', 'calib_mag']])
         self._text = self._data_format_text.format(quat, euler, accel, gyro,
                                                    mag, battery_and_mv, frame, calib_status)
         self._text = str(self._imu) + '\n' + self._text
