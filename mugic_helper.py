@@ -294,7 +294,7 @@ class IMUController(IMU):
     # frame is the overall movement of the device; psuedo-velocity
     # my algorithm isn't perfect... but it works okay. The working principle
     # is that we identify pairs of opposite accelerometer values (accelerating and decelerating)
-    # which can be interpreted as movement in one direction
+    # aka the rising and falling edge - which can be interpreted as movement in one direction
     def _update_frame(self, datagram):
         # saves accelerometer max and min values
         accel = self.absoluteAccel(datagram)
