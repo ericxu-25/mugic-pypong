@@ -10,6 +10,7 @@
 # * implement reading from usb device
 # * use scikit-learn to train a model to identify Mugic movements
 #    * A NN or Decision Tree would probably work good
+#    * instead of what we have in _update_frame
 
 import oscpy as osc
 from oscpy.server import OSCThreadServer
@@ -290,6 +291,10 @@ class IMUController(IMU):
         self._last_accel_frame = [(0,0)] * 3
         self._last_frame_update = time.time()
 
+    # frame is the overall movement of the device; psuedo-velocity
+    # my algorithm isn't perfect... but it works okay. The working principle
+    # is that we identify pairs of opposite accelerometer values (accelerating and decelerating)
+    # which can be interpreted as movement in one direction
     def _update_frame(self, datagram):
         # saves accelerometer max and min values
         accel = self.absoluteAccel(datagram)
