@@ -1025,7 +1025,7 @@ class MugicPongGame(PongGame):
 Mugic Controls:
 * spacebar to calibrate; 1 or 2 to activate CPU
 * point up/down to move striker
-* point right/left to rotate striker
+* twist right/left to rotate striker
 
 - Press P to continue, R to reset
 - Press M to return to Menu
