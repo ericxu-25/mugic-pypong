@@ -996,7 +996,8 @@ Mugic Controls:
         # drawing is expensive, so we only do it every few frames
         if self._frame_count % 20 == 0:
             self._insert_mugic_image()
-        self._insert_mugic_text()
+        if self._frame_count % 3 == 0:
+            self._insert_mugic_text()
         self._frame_count += 1
         if self._pause:
             if self._frame_count == 60:

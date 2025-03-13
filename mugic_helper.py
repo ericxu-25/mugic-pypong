@@ -8,13 +8,15 @@
 
 # WISHLIST
 # * implement reading from usb device
+# * use scikit-learn to train a model to identify Mugic movements
+#    * A NN or Decision Tree would probably work good
 
 import oscpy as osc
 from oscpy.server import OSCThreadServer
 from oscpy.client import OSCClient
 import time
 import math
-from math import pi
+from math import pi, isclose
 from collections import deque
 import quaternion.quat as quat
 import quaternion.vector as vec
@@ -26,12 +28,14 @@ import pygame
 from mugic_pygame_helpers import Window, WindowScreen, TextSprite, Color, MONOSPACE
 from threading import Timer
 
-GRAVITY = 9.8
+GRAVITY = 9.81
 
 # helper functions
+def sign(number):
+    return -1 if number < 0 else 1
+
 def _log_scale(number):
-    sign = -1 if number < 0 else 1
-    return (math.log(abs(number)+1)/3.0) * sign
+    return (math.log(abs(number)+1)/3.0) * sign(number)
 
 ## Base Classes ##
 # interface for a generic IMU device
@@ -139,6 +143,9 @@ class IMU:
         datagram['QX'] = calibrated_quat.x
         datagram['QY'] = calibrated_quat.y
         datagram['QZ'] = calibrated_quat.z
+        datagram['EX'] = (datagram['EX'] + 360) % 360
+        datagram['EY'] = (datagram['EY'] + 360) % 360
+        datagram['EZ'] = (datagram['EZ'] + 360) % 360
         return datagram
 
     # returns smoothed datagram via moving average
@@ -196,6 +203,7 @@ class IMU:
         quat_rot = IMU.to_quaternion(datagram)
         accel = quat.Vector(
                 datagram['AX'], datagram['AY'], datagram['AZ'])
+        # calibrate the absolute accel to the zero_heading
         if not raw:
             zero_heading = quat.Rotator(pi/180 * self._zero['EX'], 0, 0, 1)
             accel @= zero_heading
@@ -244,23 +252,21 @@ class IMU:
 
 
 # IMUController interface
-# Methods:
+# Main Methods:
 # * next() -> get next datagram, None if disconnected
 # * variety of state querying commands
-# Future Methods to implement:
-# * compassAngle - get compass direction with magnetometer
 class IMUController(IMU):
-    # configuration values
-    # * accel_low_pass
-    # * gyro_low_pass
-    # * max_frame_size
+    # configuration values used for basic frame interpretation
+    _accel_delta = 2
+    _accel_low_pass = array('f', [5, 5, 4])
+    _max_frame_size = 3
 
     def __init__(self, buffer_size=10):
         super().__init__(buffer_size)
         self._connected = False
         self._time_stamp = time.time()
         self._next_datagram = None
-        self._state = None
+        self._init_frame_data()
 
     def _parse_datagram(self, *values):
         values = [t(v) for t, v in zip(self.types, values)]
@@ -276,23 +282,57 @@ class IMUController(IMU):
         self._dirty = True
         self._connected = True
 
-    def connected(self):
-        return self._connected
+    def _init_frame_data(self):
+        self._rising_accel = vec.Vector(0, 0, 0)
+        self._falling_accel = vec.Vector(0, 0, 0)
+        self._last_accel = vec.Vector(0, 0, 0)
+        self._last_accel_derivative = vec.Vector(0, 0, 0)
+        self._last_accel_frame = [(0,0)] * 3
+        self._last_frame_update = time.time()
 
-    def calibrate(self, *args, **kwargs):
-        if len(self._data) != 0 and len(args) == 0:
-            next_datagram = self.peekDatagram(raw=True)
-            if next_datagram is None: return
-            super().calibrate(**next_datagram)
-        else:
-            super().calibrate(*args, **kwargs)
-        self._dirty = True
+    def _update_frame(self, datagram):
+        # saves accelerometer max and min values
+        accel = self.absoluteAccel(datagram)
+        accel_magnitude = abs(accel)
+        # detect peaks and valleys by finding where the derivative changes directions
+        accel_derivative = accel - self._last_accel
+        accel_derivative_long = (accel_derivative + self._last_accel_derivative)/2
+        self._last_accel_derivative = accel_derivative
+        self._last_accel = accel
+        for i in range(3):
+            # skip edge if value is negligible
+            if abs(accel[i]) < self._accel_low_pass[i]:
+                continue
+            # skip if not a major component of the motion
+            if abs(accel[i]) < accel_magnitude // 9:
+                continue
+            # reset rising/falling if expired or start of a new edge
+            if (time.time()-self._last_frame_update > self._max_frame_size or
+                not (self._rising_accel[i] == 0 or self._falling_accel[i] == 0)):
+                self._rising_accel[i] = 0
+                self._falling_accel[i] = 0
+                self._last_frame_update = time.time()
+            # skip if value is not a peak/valley
+            if not (isclose(accel_derivative[i], 0, abs_tol=self._accel_delta) or
+                    isclose(accel_derivative_long[i], 0, abs_tol=self._accel_delta)):
+                continue
+            # update rising and falling accel values
+            if self._rising_accel[i] == 0:
+                self._rising_accel[i] = accel[i]
+                self._last_frame_update = time.time()
+            elif self._falling_accel[i] == 0:
+                # skip if value is in the same direction as rising; or too close
+                if sign(accel[i]) == sign(self._rising_accel[i]):
+                    continue
+                if isclose(accel[i], self._rising_accel[i], abs_tol=self._accel_low_pass[i]):
+                    #if i == 2: print("too close", int(accel[i]), int(self._rising_accel[i]))
+                    continue
+                self._falling_accel[i] = accel[i]
+                self._last_accel_frame[i] = (self._rising_accel[i], time.time()-self._last_frame_update)
 
-    # appends additional state data to each datagram
+    # called when processing an incoming datagram
     def _update_state(self, datagram):
-        now = time.time()
-        self._state = datagram
-        self._time_stamp = now
+        self._update_frame(datagram)
         return datagram
 
     def next(self, raw=False, smooth=6):
@@ -317,12 +357,32 @@ class IMUController(IMU):
     def data(self):
         return self.next()
 
+    def getFrame(self):
+        return [a*dt for a, dt in self._last_accel_frame]
+        # return [a*dt for a, dt in self._last_accel_frame]
+
+    def resetFrame(self):
+        self._last_accel_frame = [(0,0)] * 3
+
+    def connected(self):
+        return self._connected
+
+    def calibrate(self, *args, **kwargs):
+        if len(self._data) != 0 and len(args) == 0:
+            next_datagram = self.peekDatagram(raw=True)
+            if next_datagram is None: return
+            super().calibrate(**next_datagram)
+        else:
+            super().calibrate(*args, **kwargs)
+        self._dirty = True
+        self.resetFrame()
+
     # easy controller methods - query controller speed, gyro, facing
-    def _moving(self, axis, direction=1, threshold=10, datagram=None):
+    def _moving(self, axis, direction=1, threshold=0.2, datagram=None):
         if datagram is None: datagram = self.next()
         if datagram is None: return False
-        axis = 'AX' if axis == 0 else 'AY' if axis == 1 else 'AZ'
-        if datagram[axis] * direction > threshold:
+        #axis = 'AX' if axis == 0 else 'AY' if axis == 1 else 'AZ'
+        if self.getFrame()[axis] * direction > threshold:
             return True
         return False
 
@@ -365,8 +425,8 @@ class IMUController(IMU):
     # interface methods
     def movingUp(self, **kwargs): return self._moving(2, 1, **kwargs)
     def movingDown(self, **kwargs): return self._moving(2, -1, **kwargs)
-    def movingRight(self, **kwargs): return self._moving(1, 1, **kwargs)
-    def movingLeft(self, **kwargs): return self._moving(1, -1, **kwargs)
+    def movingRight(self, **kwargs): return self._moving(1, -1, **kwargs)
+    def movingLeft(self, **kwargs): return self._moving(1, 1, **kwargs)
     def movingForward(self, **kwargs): return self._moving(0, 1, **kwargs)
     def movingBackward(self, **kwargs): return self._moving(0, -1, **kwargs)
 
@@ -532,8 +592,6 @@ class IMUController(IMU):
     # TODO
     # * acceleration in direction of pointing
     # * low-pass acceleration filter
-    # * acceleration frame (black and white) output
-    # * acceleration frame interpretation
 
     # acceleration in the direction of pointing
     def thrustAccel(self, datagram):
@@ -593,6 +651,7 @@ class MugicDevice(IMUController):
 
     def _update_state(self, datagram):
         if self.legacy: # Mugic 1.0 - x rot is inverted
+            # also note: Mugic 1.0 accel values are much noisier
             # ref: https://gamedev.stackexchange.com/questions/201977
             datagram['QZ'], datagram['QX'] = -datagram['QZ'], -datagram['QX']
             datagram['EY'] = -datagram['EY']
@@ -655,12 +714,6 @@ class MugicDevice(IMUController):
         ret_val['seqnum'] = datagrams[0]['seqnum']
         return ret_val
 
-    def _calibrate(self, datagram):
-        datagram = super()._calibrate(datagram)
-        # zero the absolute accel/gyro to the zero facing
-        # this means rotating both on the z axis since orientation is defined on x,y
-        return datagram
-
     def calibrate(self, *args, **kwargs):
         self.autoDetectMugicType()
         super().calibrate(*args, **kwargs)
@@ -673,12 +726,6 @@ class MugicDevice(IMUController):
         self._zero['calib_accel'] = 0
         self._zero['calib_gyro'] = 0
         self._zero['calib_mag'] = 0
-
-    def absoluteAccel(self, datagram, raw=False):
-        if datagram is None: return None
-        if self.legacy:
-            return super().accel(datagram)
-        return super().absoluteAccel(datagram, raw)
 
     def absoluteGyro(self, datagram, raw=False):
         if datagram is None: return None
@@ -802,6 +849,7 @@ class IMUDisplay:
                          start_pos=ggrect.midleft,
                          end_pos=ggrect.midright)
         self._max_ay = 30
+        self._max_fy = 30
         self._max_gy = 360 * 4
         self._ag_rect = agrect
         self._gg_rect = ggrect
@@ -950,21 +998,26 @@ class IMUDisplay:
             #gyro_data =  self._imu.gyro(datagram)
             accel_data = self._imu.absoluteAccel(datagram)
             gyro_data =  self._imu.absoluteGyro(datagram)
-            # draw acceleration values
-            accel_points = [self._norm_graph_val(
-                val,
-                self._max_ay,
-                self._ag_rect)
-                            for val in accel_data]
+            frame_data = self._imu.getFrame()
+            # draw frame values
+            frame_points = [self._norm_graph_val(
+                val, self._max_fy, self._ag_rect)
+                            for val in frame_data]
             self._action_image.fill(Color.black,
                                     (self._ag_rect.topleft,
                                      (1, self._ag_rect.height)))
             self._action_image.fill(Color.white,
                                     (self._ag_rect.midleft, (1, 1)))
             colors = [Color.red, Color.green, Color.blue]
+            for point, color in zip(frame_points, colors):
+                self._action_image.fill(color, (point, (1, 1)))
+            # draw acceleration values
+            accel_points = [self._norm_graph_val(
+                val, self._max_ay, self._ag_rect)
+                            for val in accel_data]
             for point, color in zip(accel_points, colors):
                 self._action_image.fill(color, (point, (1, 3)))
-            self._action_image.fill(color, (point, (1, 3)))
+
             # draw gyroscope values
             gyro_points = [self._norm_graph_val(
                 val,
