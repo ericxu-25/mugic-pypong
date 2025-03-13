@@ -1049,8 +1049,8 @@ class IMUDisplay:
         self._data_format_text = '\n'.join(
                 [value+": {}" for value in data_labels])
         self._action_format_text = "Moving: {}\nRotating: {}\n"
+        self._action_format_text += "Pointing: {:3s}\nYaw {:3s} Pitch {:3s} Roll {:3s}\n"
         self._action_format_text += "Thrust: {:>6.2f}, Swing:{:>6.2f}\n"
-        self._action_format_text += "Pointing: {:3s}\nYaw {:3s} Pitch {:3s} Roll {:3s}"
 
     def getDataText(self):
         if not self._imu.dirty: return self._text
@@ -1088,9 +1088,9 @@ class IMUDisplay:
         swing = self._imu.swingAccel(datagram=datagram)
         self._action_text = self._action_format_text\
                 .format(moving, rotating,
-                        thrust, swing,
                         pointing, yawing,
-                        pitching, rolling)
+                        pitching, rolling,
+                        thrust, swing)
         return self._action_text
 
 

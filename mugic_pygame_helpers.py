@@ -22,6 +22,8 @@ MONOSPACE = pygame.font.match_font(["inconsolata", "consolas", "monospace"])
 
 class Color:
     black = (0,0,0)
+    darkgrey = (50,50,60)
+    lightgrey = (150,150,160)
     white = (255, 255, 255)
     green = (0, 255, 0)
     red = (255, 0, 0)
@@ -89,7 +91,7 @@ class Sprite(pygame.sprite.DirtySprite):
         self._scale = 1
         self.rotation = 0
         self.base_image = pygame.Surface((self._width, self._height))
-        self.base_image.fill(Color.green)
+        self.base_image.fill(Color.random())
         self._colorkey = None
         self.setImage(self.base_image)
         self.rect = self.image.get_rect()
@@ -127,7 +129,7 @@ class Sprite(pygame.sprite.DirtySprite):
         scale = self.scale
         self.rect.w = self._width * scale
         self.rect.h = self._height * scale
-        self.image = pygame.transform.scale(
+        self.image = pygame.transform.smoothscale(
                 self.base_image,
                 (self.rect.w, self.rect.h))
         if self.rotation != 0:
@@ -212,26 +214,54 @@ class Sprite(pygame.sprite.DirtySprite):
     @property
     def height(self): return self._height
 
+    @height.setter
+    def height(self, val):
+        self._height = val
+        self._update_image()
+
     @property
     def width(self): return self._width
+
+    @width.setter
+    def width(self, val):
+        self._width = val
+        self._update_image()
 
     @property
     def bottom(self): return self._y + self._height
 
+    @bottom.setter
+    def bottom(self, val): self.y = val - self._height
+
     @property
     def top(self): return self._y
+
+    @top.setter
+    def top(self, val): self.y = val
 
     @property
     def centery(self): return self._y + self._height//2
 
+    @centery.setter
+    def centery(self, val): self.y = val - self._height//2
+
     @property
     def right(self): return self._x + self._width
+
+    @right.setter
+    def right(self, val): self.x = val - self._width
 
     @property
     def centerx(self): return self._x + self._width//2
 
+    @centerx.setter
+    def centerx(self, val): self.x = val - self._width//2
+
     @property
     def left(self): return self._x
+
+    @left.setter
+    def left(self, val): self.x = val
 
     def distanceTo(self, other):
         return math.sqrt((self.centerx - other.centerx)**2 + (self.centery-other.centery)**2)
