@@ -258,8 +258,8 @@ class IMU:
 class IMUController(IMU):
     # configuration values used for basic frame interpretation
     _accel_delta = 2
-    _accel_low_pass = array('f', [5, 5, 4])
-    _max_frame_size = 3
+    _accel_low_pass = array('f', [3, 5, 5])
+    _max_frame_size = 2
 
     def __init__(self, buffer_size=10):
         super().__init__(buffer_size)
@@ -321,11 +321,10 @@ class IMUController(IMU):
                 self._rising_accel[i] = accel[i]
                 self._last_frame_update = time.time()
             elif self._falling_accel[i] == 0:
-                # skip if value is in the same direction as rising; or too close
+                # skip if value is in the same direction as rising, or just too close
                 if sign(accel[i]) == sign(self._rising_accel[i]):
                     continue
                 if isclose(accel[i], self._rising_accel[i], abs_tol=self._accel_low_pass[i]):
-                    #if i == 2: print("too close", int(accel[i]), int(self._rising_accel[i]))
                     continue
                 self._falling_accel[i] = accel[i]
                 self._last_accel_frame[i] = (self._rising_accel[i], time.time()-self._last_frame_update)
@@ -359,7 +358,6 @@ class IMUController(IMU):
 
     def getFrame(self):
         return [a*dt for a, dt in self._last_accel_frame]
-        # return [a*dt for a, dt in self._last_accel_frame]
 
     def resetFrame(self):
         self._last_accel_frame = [(0,0)] * 3
@@ -378,7 +376,7 @@ class IMUController(IMU):
         self.resetFrame()
 
     # easy controller methods - query controller speed, gyro, facing
-    def _moving(self, axis, direction=1, threshold=0.2, datagram=None):
+    def _moving(self, axis, direction=1, threshold=0.1, datagram=None):
         if datagram is None: datagram = self.next()
         if datagram is None: return False
         #axis = 'AX' if axis == 0 else 'AY' if axis == 1 else 'AZ'
