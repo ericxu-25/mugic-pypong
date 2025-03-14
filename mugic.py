@@ -56,6 +56,11 @@ from threading import Timer
 def sign(number):
     return -1 if number < 0 else 1
 
+def points_are_close(self, p0, p1, threshold):
+    """returns if two points are closer together than a threshold value"""
+    distance = math.sqrt(sum([(v1-v2)**2 for v1,v2 in zip(p0,p1)]))
+    return distance < threshold
+
 #########################################
 #             BASE CLASSES              #
 #########################################
@@ -109,8 +114,6 @@ class IMU:
     @property
     def dirty(self):
         """status of the data of the IMU"""
-        if len(self._data) > 0:
-            self._dirty = True
         return self._dirty
 
     @dirty.setter
@@ -406,6 +409,7 @@ class IMUController(IMU):
         super().__init__(buffer_size)
         self._connected = False
         self._last_datagram = None
+        self._last_datagram_time = time.time()
         self._init_frame_data()
 
     def _init_frame_data(self):
@@ -470,54 +474,72 @@ class IMUController(IMU):
         """callback method used when receiving a datagram from the IMU"""
         datagram = self._parse_datagram(*values)
         super()._add_datagram(datagram)
-        self._connected = True
 
     # called when processing an incoming datagram
     def _update_state(self, datagram):
         """overridable method called when updating an incoming datagram"""
         self._update_frame(datagram)
+        self._last_datagram_time = time.time()
         return datagram
 
     def next(self, raw=False, smooth=6):
         """returns the next datagram from the controller
 
         Note that we never explicitly pop a datagram since the deque data
-        structure does that for us when the deque fills up.
+        structure does that for us when the deque fills up. This function
+        is an extension of peekDatagram in that it also updates connection
+        and updated status.
 
         Args:
-            raw (bool): false
+            raw (bool): if True, doesn't zero the datagram or update connection status
+            smooth (int): how many datagrams to smooth over
+
+        Returns:
+            The next datagram on the deque, or None if unavailable.
         """
+        if not self._dirty: return self._last_datagram
         next_datagram = self.peekDatagram(raw=raw, smooth=smooth)
         if raw: return next_datagram
-        # check if there was a disconnect
-        if self._last_datagram is not None and time.time() - self._last_datagram_time > 5:
-            print(f"{self} disconnected")
-            self._connected = False
-            self._dirty = True
-            self._last_datagram = None
-            self.popDatagrams()
-            return None
         if next_datagram is None: return self._last_datagram
+        # check if the next datagram is new
         if (self._last_datagram is None
             or next_datagram != self._last_datagram):
             self._last_datagram = last_datagram
             self._last_datagram_time = time.time()
+            self._dirty = True
+        else:
+            self._dirty = False
         return self._last_datagram.copy()
 
     @property
     def data(self):
+        """returns the next datagram"""
         return self.next()
 
     def getFrame(self):
+        """returns the last movement frame"""
         return [a*dt for a, dt in self._last_accel_frame]
 
     def resetFrame(self):
+        """clears the last movement frame"""
         self._last_accel_frame = [(0,0)] * 3
 
+    @property
+    def movement(self):
+        """alias for getFrame()"""
+        return self.getFrame()
+
     def connected(self):
-        return self._connected
+        """queries and returns connection status"""
+        if time.time() - self._last_datagram_time < 5:
+            return True
+        else:
+            self._last_datagram = None
+            self._dirty = True
+        return False
 
     def calibrate(self, *args, **kwargs):
+        """calibrates using passed in args OR the next datagram and resets the movement frame"""
         if len(self._data) != 0 and len(args) == 0:
             next_datagram = self.peekDatagram(raw=True)
             if next_datagram is None: return
@@ -529,6 +551,20 @@ class IMUController(IMU):
 
     # easy controller methods - query controller speed, gyro, facing
     def _moving(self, axis, direction=1, threshold=0.1, datagram=None):
+        """returns if the IMU was moving along an axis
+
+        This method does not reset the last movement frame - that must be done manually once the
+        movement has been processed.
+
+        Args:
+            axis (int): axis of movement to query
+            direction (-1 or 1): direction along the axis
+            threshold (float): threshold of the movement to consider
+
+        Returns:
+            True if the controller's last movement frame did correspond with the passed in information
+        """
+
         if datagram is None: datagram = self.next()
         if datagram is None: return False
         #axis = 'AX' if axis == 0 else 'AY' if axis == 1 else 'AZ'
@@ -537,6 +573,18 @@ class IMUController(IMU):
         return False
 
     def _rotating(self, axis, direction=1, threshold=80, datagram=None):
+        """returns if the IMU was rotating along an axis
+
+        Args:
+            axis (int): axis of movement to query
+            direction (-1 or 1): direction along the axis
+            threshold (float): threshold of the rotation to consider
+
+        Returns:
+            True if the controller's gyroscope did reflect a rotation along the axis of the specified
+            magnitude
+        """
+
         if datagram is None: datagram = self.next()
         if datagram is None: return False
         axis = 'GX' if axis == 0 else 'GY' if axis == 1 else 'GZ'
@@ -544,8 +592,21 @@ class IMUController(IMU):
             return True
         return False
 
-    # using euler angles leads to gimbal lock problems...
     def _facing(self, axis, direction, threshold=45, datagram=None):
+        """returns if the IMU is facing towards the direction along an axis
+
+        Note that using euler angles leads to gimbal lock problems... specifically with the Y axis
+
+        Args:
+            axis (int): axis to query facing on
+            direction (-1 or 1): direction along the axis
+            threshold (float): how far below or above the target angle is considered valid
+
+        Returns:
+            True if the controller's euler readings show the controller is facing in the right
+            direction.
+        """
+
         if datagram is None:
             datagram = self.next()
         direction = (360 + direction%360) % 360
@@ -559,18 +620,29 @@ class IMUController(IMU):
             return left <= angle or angle <= right
         return angle >= left and angle <= right
 
-    # alternative approach to facing using quaternions
     def _pointing(self, point, threshold=0.70, datagram=None, pointing_at=None):
+        """returns if the IMU is pointing towards a given point on a unit sphere
+
+        an alternative approach to facing using quaternions, more useful for controls
+
+        Args:
+            point (int *3): point on the unit sphere to check
+            threshold (float): how far away from the target point is still considered valid
+            datagram (dict): optional datagram to check; if None, uses the next datagram
+            pointing_at (int * 3): optional provided point to check with. If provided, skips
+                datagram processing
+
+        Returns:
+            True if where the IMU is pointing is close t the target point
+        """
+
         if pointing_at is None and datagram is None:
             datagram = self.next()
+            if datagram is None: return False
         if pointing_at is None:
             pointing_at = self._pointing_at(datagram)
-        return self._is_pointing_at(point, pointing_at, threshold)
+        return points_are_close(point, pointing_at, threshold)
 
-    # simple distance function based check
-    def _is_pointing_at(self, p0, p1, threshold):
-        distance = math.sqrt(sum([(v1-v2)**2 for v1,v2 in zip(p0,p1)]))
-        return distance < threshold
 
     # interface methods
     def movingUp(self, **kwargs): return self._moving(2, 1, **kwargs)
@@ -614,6 +686,7 @@ class IMUController(IMU):
     def pointingLeft(self, **kwargs): return self._pointing((0, 1, 0), **kwargs)
 
     def jolted(self, threshold=10, datagram=None):
+        """Returns True if the magnitude of acceleration is over a threshold value"""
         if datagram is None:
             datagram = self.next()
         if abs(self.accel(datagram)) > threshold: return True
@@ -621,6 +694,7 @@ class IMUController(IMU):
 
     # combination functions
     def moving(self, text=False, **kwargs):
+        """Returns bits or a list of strings corresponding to overall sensor movement"""
         if "datagram" not in kwargs: kwargs["datagram"] = self.next()
         moving_bits = 0
         if self.movingUp(**kwargs): moving_bits += 0b1
@@ -646,6 +720,7 @@ class IMUController(IMU):
 
 
     def rotating(self, text=False, **kwargs):
+        """Returns bits or a list of strings corresponding to overall sensor rotation"""
         if "datagram" not in kwargs: kwargs["datagram"] = self.next()
         rotating_bits = 0
         if self.rotatingUp(**kwargs): rotating_bits += 0b1
@@ -670,6 +745,7 @@ class IMUController(IMU):
         return text
 
     def pitching(self, text=False, **kwargs):
+        """Returns bits or a list of strings corresponding to sensor pitch facing"""
         if "datagram" not in kwargs: kwargs["datagram"] = self.next()
         pitching_bits = 0
         if self.pitchingUp(**kwargs): pitching_bits += 0b1
@@ -681,6 +757,7 @@ class IMUController(IMU):
         return pitching_bits
 
     def yawing(self, text=False, **kwargs):
+        """Returns bits or a list of strings corresponding to sensor yaw facing"""
         if "datagram" not in kwargs:
             kwargs["datagram"] = self.next()
         yawing_bits = 0
@@ -693,6 +770,7 @@ class IMUController(IMU):
         return yawing_bits
 
     def rolling(self, text=False, **kwargs):
+        """Returns bits or a list of strings corresponding to sensor roll facing"""
         if "datagram" not in kwargs: kwargs["datagram"] = self.next()
         rolling_bits = 0
         if self.rollingRight(**kwargs): rolling_bits += 0b1
@@ -714,6 +792,11 @@ class IMUController(IMU):
 
     # returns which quadrant is being pointed at
     def pointing(self, text=False, **kwargs):
+        """Returns which directions (up, down, right, left, forward, backward) the sensor is pointing.
+
+        Returns as as bits or a list of strings
+        """
+
         if "datagram" not in kwargs: kwargs["datagram"] = self.next()
         pointing_at = self._pointing_at(kwargs["datagram"]).normalise()
         if "pointing_at" not in kwargs: kwargs["pointing_at"] = pointing_at
@@ -738,10 +821,6 @@ class IMUController(IMU):
         if pointing_bits & (1<<4): text.append("FW")
         if pointing_bits & (1<<5): text.append("BW")
         return text
-
-    # TODO
-    # * acceleration in direction of pointing
-    # * low-pass acceleration filter
 
     # acceleration in the direction of pointing
     def thrustAccel(self, datagram):
