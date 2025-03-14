@@ -1,10 +1,15 @@
 from mugic_pygame_helpers import *
 from mugic_helper import *
 
-# Basic controls (keyboard)
+# Basic Controls (keyboard)
 # - up, left, down, right, rotleft, rotright
 # p1 = wasdqe OR wasdzx or wasdcv
 # p2 = arrows<> OR ijkluo
+# Basic Controls (Mugic)
+# - point towards ceiling/floor to control up/down
+# - twist right/left to change rotation
+# - tilt fully down/up to continue to rotate
+# - shake the Mugic to bring it back to the center
 
 
 # PONG implementation
@@ -25,7 +30,7 @@ class Striker(GameSprite):
         self.friction = 0.8 * (10.0/(10 + friction/10))
         self.elasticity = 1.0 - 0.6 / (elasticity/10.0 + 0.6)
         self.power = 8 * (power / 10.0)
-        self.grip = 0.8 - 0.8/(grip/10.0 + 0.8)
+        self.grip = 1.0 - 1.0/(grip/10.0 + 1)
         striker = pygame.Surface(wh, flags=pygame.SRCALPHA)
         striker.fill(self.color)
         self.setImage(striker)
@@ -101,6 +106,8 @@ class Striker(GameSprite):
         db = abs(self._x - ball._x)
         if db > self._width + self._CPU_RANDOM * 6:
             return
+        if db < self._width + self._CPU_RANDOM * 1.3:
+            return
         if ball.centery < self.centery:
             if self.x > ball.x:
                 self._rotateLeft()
@@ -174,6 +181,7 @@ class Striker(GameSprite):
         self.rotateTo(0)
         self.rot_velocity = 0
         self.velocity = 0
+        self._CPU_RANDOM = random.randint(1, 30)
         self.debugDraw(self._draw_striker_bounce, None)
 
     def _draw_striker_bounce(self, display, ball, **bounce_data):
@@ -185,9 +193,9 @@ class Striker(GameSprite):
         fit_scale = tab._height / self._height / 1.5
         fit_scale = fit_scale * 8 // 4 / 2
         # draw the striker onto the tab
-        center = (tab.centerx, tab.centery + text[1].rect.y)
-        center_position = (center[0] - self.rect.width//2 * fit_scale,
-                           center[1] - self.rect.height//2 * fit_scale)
+        center = (tab.centerx * self.scale,  (tab.centery + text[1].rect.y) * self.scale)
+        center_position = (center[0] - self.rect.width//2 * fit_scale * self.scale,
+                           center[1] - self.rect.height//2 * fit_scale * self.scale)
         # could use smoothscale_by instead (slower, but cleaner)
         tab.screen.blit(
                 pygame.transform.scale_by(self.image, fit_scale),
@@ -197,8 +205,8 @@ class Striker(GameSprite):
         scale = self.game._scale
         ball_offset = bounce_data['offset'] * scale * fit_scale
         ball_position = (ball_offset +
-                         (center[0] - ball.rect.width//2 * fit_scale,
-                          center[1] - ball.rect.height//2 * fit_scale))
+                         (center[0] - ball.rect.width//2 * fit_scale * self.scale,
+                          center[1] - ball.rect.height//2 * fit_scale * self.scale))
         tab.screen.blit(
                 pygame.transform.scale_by(ball.image, fit_scale),
                 ball_position)
@@ -331,12 +339,11 @@ class Ball(GameSprite):
             if pygame.sprite.collide_mask(self, striker):
                 self._bounceOnStriker(striker)
 
-    def _unclipFromStriker(self, striker):
-        backstep = -self.velocity
-        backstep.normalize_ip()
-        limit = 3 * self._substeps
+    def _unclipFromStriker(self, striker, striker_normal):
+        backstep = striker_normal
+        limit = self._substeps
         while pygame.sprite.collide_mask(self, striker):
-            self.move(backstep.x * 2, backstep.y)
+            self.move(backstep.x, backstep.y)
             self.move(0, striker.velocity)
             limit -= 1
             if limit <= 0:
@@ -407,15 +414,15 @@ class Ball(GameSprite):
         return final_vector
 
     def _bounceOnStriker(self, striker):
+        # calculate information about the collision
+        striker_normal = self._normalizedStrikerImpactAngle(striker)
+        direction = (-1 if self.velocity.x < 0 else 1)
         # first, move ball back until not clipping Striker
-        self._unclipFromStriker(striker)
+        self._unclipFromStriker(striker, striker_normal)
         final_vector = pygame.math.Vector2(0, 0)
         offset_vector = pygame.math.Vector2(
                 self._cx - striker._cx,
                 self._cy - striker._cy)
-        # then calculate information about the collision
-        striker_normal = self._normalizedStrikerImpactAngle(striker)
-        direction = (-1 if self.velocity.x < 0 else 1)
         # reflect off the striker
         reflect_vector = self.velocity.copy().reflect(striker_normal)
         reflect_vector.scale_to_length(self.speed * striker.elasticity)
@@ -428,30 +435,35 @@ class Ball(GameSprite):
         # modification 2: striker relative movement (spin)
         spin_mod = striker.velocity * striker.grip / self.mass * direction
         self.spin += (abs(striker_normal.x)) * spin_mod
-        self.spin *= striker.elasticity
+        self.spin *= striker.grip
         # modification 3: striker rotation
-        self.spin += striker.rot_velocity / (15 * (1-striker.grip))
+        self.spin += striker.rot_velocity * striker.grip / 4
         rotate_hit_vector = self._rotateHitOnStriker(striker)
         final_vector += rotate_hit_vector
         # stuck-proofing
-        # if final vector not pointing away from striker (and towards center)...
-        # critical! - use offset_vector to correct (probably hit edge)
-        critical = pygame.math.Vector2(0, 0)
+        # correct bounce if not towards the center and away from the striker
         towards_striker = (offset_vector.x > 0) != (final_vector.x > 0)
-        towards_center = self.game._width//2 - self._cx * final_vector.x <= 0
+        towards_center = (self.game._width//2 - self._cx) * final_vector.x >= 0
         if towards_striker or not towards_center:
             new_offset = offset_vector.copy()
-            new_offset.scale_to_length(striker.power * 1.2/self.mass)
-            critical = new_offset
+            new_offset.scale_to_length(striker.power / self.mass)
             final_vector = (rotate_hit_vector +
                             striker_hit_vector +
                             new_offset)
+        # increase power by 10% if the ball hit the striker corner
+        # which can be detected with towards_striker
+        critical = pygame.math.Vector2(0, 0)
+        if towards_striker:
+            final_vector *= 1.1
+            critical = final_vector
         # apply final calculated vector
         if final_vector.magnitude() == 0:
             self.velocity = striker_hit_vector + reflect_vector
         else:
             self.velocity = final_vector
         self.speed = self.velocity.magnitude()
+        # apply an extra layer of friction onto the striker
+        striker._apply_friction()
         # put the bounce onto the display
         bounce_data = {"normal": striker_normal,
                        "offset": offset_vector,
@@ -527,7 +539,7 @@ class PongGame(Game):
         self.debug_screen_right = DisplayScreen(w, self.height)
         self.debug_screen_right.splitTabs(3)
         self._window.addScreen(self.debug_screen_left, (0, 0))
-        self._window.addScreen(self.debug_screen_right, (w + self.width, 0))
+        self._window.addScreen(self.debug_screen_right, (w + self.abs_width, 0))
 
     def _initialize_sprites(self):
         # initialize strikers
@@ -816,12 +828,12 @@ class MugicPongGame(PongGame):
         super()._initialize_sprites()
         self.pointer_right = GameSprite(self)
         self.pointer_right.setImage(self.striker_right.base_image.copy())
-        self.pointer_right.base_image.fill(Color.darkgrey)
+        self.pointer_right.base_image.fill(Color.lightgrey)
         self.pointer_right.layer = -1
         self.pointer_right.hide()
         self.pointer_left = GameSprite(self)
         self.pointer_left.setImage(self.striker_left.base_image.copy())
-        self.pointer_left.base_image.fill(Color.darkgrey)
+        self.pointer_left.base_image.fill(Color.lightgrey)
         self.pointer_left.layer = -1
         self.pointer_left.hide()
         self._add_sprite(self.pointer_right, self.pointer_left)
@@ -903,7 +915,9 @@ class MugicPongGame(PongGame):
                     self.striker_right._rotateTowardsAngle(-self.p1_rotz * 1.1)
                 else:
                     self._handle_p1_controls()
-            else: self.p1_jolt = not self.striker_right._moveTowardsNormal()
+            else:
+                self.p1_jolt = not (self.striker_right._moveTowardsNormal() and
+                                    self.striker_right.rotateTowardsNormal())
         else:
             self.pointer_right.hide()
             self._handle_p1_controls()
@@ -920,7 +934,9 @@ class MugicPongGame(PongGame):
                     self.striker_left._rotateTowardsAngle(-self.p2_rotz * 1.1)
                 else:
                     self._handle_p2_controls()
-            else: self.p2_jolt = not self.striker_left._moveTowardsNormal()
+            else:
+                self.p2_jolt = not (self.striker_left._moveTowardsNormal() and
+                                    self.striker_left.rotateTowardsNormal())
         else:
             self.pointer_left.hide()
             self._handle_p2_controls()
@@ -1059,7 +1075,8 @@ Mugic Controls:
 # MAIN
 def main():
     pygame.init()
-    PONG = MugicPongGame(WIDTH, HEIGHT)
+    PONG = PongGame(WIDTH, HEIGHT)
+    #PONG = MugicPongGame(WIDTH, HEIGHT)
     PONG.start()
     pygame.quit()
 

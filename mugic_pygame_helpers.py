@@ -220,12 +220,18 @@ class Sprite(pygame.sprite.DirtySprite):
         self._update_image()
 
     @property
+    def abs_height(self): return self._height * self.scale
+
+    @property
     def width(self): return self._width
 
     @width.setter
     def width(self, val):
         self._width = val
         self._update_image()
+
+    @property
+    def abs_width(self): return self._width * self.scale
 
     @property
     def bottom(self): return self._y + self._height
@@ -588,7 +594,7 @@ class Screen:
                          Color.black,
                          game_space)
         self.background = self._base_background
-        self._screen = pygame.Surface((self.width, self.height))
+        self._screen = pygame.Surface((self.abs_width, self.abs_height))
         self._redraw()
 
     @property
@@ -610,7 +616,7 @@ class Screen:
 
     def _refresh_background(self):
         self.background = pygame.transform.scale(
-                self._base_background, (self.width, self.height))
+                self._base_background, (self.abs_width, self.abs_height))
 
     @property
     def scale(self):
@@ -627,20 +633,20 @@ class Screen:
         return self
 
     @property
-    def base_width(self):
+    def width(self):
         return self._width + self._padding[0] + self._padding[1]
 
     @property
-    def width(self):
-        return self._scale*(self.base_width)
-
-    @property
-    def base_height(self):
-        return self._height + self._padding[2] + self._padding[3]
+    def abs_width(self):
+        return self._scale*(self.width)
 
     @property
     def height(self):
-        return self._scale*(self.base_height)
+        return self._height + self._padding[2] + self._padding[3]
+
+    @property
+    def abs_height(self):
+        return self._scale*(self.height)
 
     @property
     def left(self):
@@ -687,11 +693,11 @@ class Screen:
     @property
     def base_rect(self):
         return pygame.Rect(self._position,
-                           (self.base_width, self.base_height))
+                           (self.width, self.height))
 
     @property
     def rect(self):
-        return pygame.Rect(self.position, (self.width, self.height))
+        return pygame.Rect(self.position, (self.abs_width, self.abs_height))
 
     @fps.setter
     def fps(self, fps):
@@ -778,10 +784,10 @@ class DisplayScreen(WindowScreen):
         self.tabs = sorted(self.tabs, key=lambda x: x._position)
         last_tab = self.tabs[-1]
         tab_rect.topleft = last_tab.base_rect.topleft
-        tab_rect.move_ip(last_tab.base_width, 0)
+        tab_rect.move_ip(last_tab.width, 0)
         if not self.base_rect.contains(tab_rect):
             tab_rect.x = 0
-            tab_rect.y += last_tab.base_height
+            tab_rect.y += last_tab.height
         if not self.base_rect.contains(tab_rect):
             print("addTab: Error fitting next tab!")
         return tab_rect.topleft
