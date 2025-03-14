@@ -56,7 +56,7 @@ from threading import Timer
 def sign(number):
     return -1 if number < 0 else 1
 
-def points_are_close(self, p0, p1, threshold):
+def points_are_close(p0, p1, threshold):
     """returns if two points are closer together than a threshold value"""
     distance = math.sqrt(sum([(v1-v2)**2 for v1,v2 in zip(p0,p1)]))
     return distance < threshold
@@ -504,7 +504,7 @@ class IMUController(IMU):
         # check if the next datagram is new
         if (self._last_datagram is None
             or next_datagram != self._last_datagram):
-            self._last_datagram = last_datagram
+            self._last_datagram = next_datagram
             self._last_datagram_time = time.time()
             self._dirty = True
         else:
@@ -689,6 +689,7 @@ class IMUController(IMU):
         """Returns True if the magnitude of acceleration is over a threshold value"""
         if datagram is None:
             datagram = self.next()
+            if datagram is None: return False
         if abs(self.accel(datagram)) > threshold: return True
         return False
 

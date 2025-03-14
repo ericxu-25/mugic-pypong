@@ -1,5 +1,6 @@
 from mugic_pygame_helpers import *
 from mugic_helper import *
+from mugic import *
 
 # Basic Controls (keyboard)
 # - up, left, down, right, rotleft, rotright
@@ -1075,8 +1076,8 @@ Mugic Controls:
 # MAIN
 def main():
     pygame.init()
-    PONG = PongGame(WIDTH, HEIGHT)
-    #PONG = MugicPongGame(WIDTH, HEIGHT)
+    #PONG = PongGame(WIDTH, HEIGHT)
+    PONG = MugicPongGame(WIDTH, HEIGHT)
     PONG.start()
     pygame.quit()
 
