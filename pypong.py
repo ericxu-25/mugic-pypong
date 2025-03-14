@@ -829,12 +829,12 @@ class MugicPongGame(PongGame):
         super()._initialize_sprites()
         self.pointer_right = GameSprite(self)
         self.pointer_right.setImage(self.striker_right.base_image.copy())
-        self.pointer_right.base_image.fill(Color.lightgrey)
+        self.pointer_right.base_image.fill(Color.darkgrey)
         self.pointer_right.layer = -1
         self.pointer_right.hide()
         self.pointer_left = GameSprite(self)
         self.pointer_left.setImage(self.striker_left.base_image.copy())
-        self.pointer_left.base_image.fill(Color.lightgrey)
+        self.pointer_left.base_image.fill(Color.darkgrey)
         self.pointer_left.layer = -1
         self.pointer_left.hide()
         self._add_sprite(self.pointer_right, self.pointer_left)

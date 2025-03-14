@@ -68,12 +68,22 @@ def points_are_close(p0, p1, threshold):
 class IMU:
     """An interface class for an IMU (intertial measurement unit) that handles datagram processing
 
+    The IMU class packages datagrams received from an IMU device as a dictionary of key value pairs
+    and stores them into a working deque buffer. It assumes a 9 axis data structure and provides methods
+    to work with a continuous stream of IMU input.
+
     Class Attributes:
         types (list of types): list of types matching the datagram
         datagram (list of str): list of labels for each data item from the IMU
         buffer_limit (int): maximum allowed working buffer size
         orientation ((int) * 3): direction that the IMU points; Z axis is vertical
         dimensions ((int) * 3): dimension ratios of the IMU; default is a cube
+
+    Attributes:
+        _last_datagram_time (float): timestamp of the most recent datagram
+        _data (deque of dicts): working deque buffer for IMU datagrams
+        _reserve (None or dequeu of dicts): reserve deque for persistent datagram storage
+        _zero (dict): reserve deque for persistent datagram storage
 
     """
     types = [float] * 25
@@ -97,8 +107,6 @@ class IMU:
                 deque is created to ensure the working deque is manageable.
 
         """
-        self.dirty = False
-        self._buffer_size = buffer_size
         self._reserve = None
         # maintain buffer size under buffer_limit (for speed)
         if buffer_size is None:
@@ -110,10 +118,18 @@ class IMU:
         else:
             self._data = deque(maxlen=buffer_size)
         self.zero()
+        self._last_datagram_time = 0.0
 
     @property
     def dirty(self):
-        """status of the data of the IMU"""
+        """updated status of the data in the IMU
+
+        dirty is set to True whenever new data is received. Or a change
+        to how datagrams are returned are detected. This value is never
+        set to False by any class methods; it is up to the user to query this
+        value and manually set dirty to False after finishing with a data item.
+
+        """
         return self._dirty
 
     @dirty.setter
@@ -128,11 +144,11 @@ class IMU:
         """constructs a datagram (dict) given a list of raw values"""
         values = [t(v) for t, v in zip(self.types, values)]
         datagram = dict(zip(self.datagram, values))
-        datagram = self._update_state(datagram)
         return datagram
 
     def _add_datagram(self, datagram):
         """pushes the passed in datagram onto the data queue and updates dirty status"""
+        datagram = self._update_state(datagram)
         self._data.appendleft(datagram)
         if self._reserve is not None:
             self._reserve.appendleft(datagram)
@@ -201,7 +217,6 @@ class IMU:
             None if there were no datagrams, else the most recent datagram
         """
         if len(self._data) == 0: return None
-        self._dirty = True
         last_datagram = self._data[0]
         self._data.clear()
         if self._reserve is not None:
@@ -407,9 +422,7 @@ class IMUController(IMU):
 
     def __init__(self, buffer_size=10):
         super().__init__(buffer_size)
-        self._connected = False
         self._last_datagram = None
-        self._last_datagram_time = time.time()
         self._init_frame_data()
 
     def _init_frame_data(self):
@@ -478,8 +491,8 @@ class IMUController(IMU):
     # called when processing an incoming datagram
     def _update_state(self, datagram):
         """overridable method called when updating an incoming datagram"""
+        super()._update_state(datagram)
         self._update_frame(datagram)
-        self._last_datagram_time = time.time()
         return datagram
 
     def next(self, raw=False, smooth=6):
@@ -487,28 +500,22 @@ class IMUController(IMU):
 
         Note that we never explicitly pop a datagram since the deque data
         structure does that for us when the deque fills up. This function
-        is an extension of peekDatagram in that it also updates connection
-        and updated status.
+        is an extension of peekDatagram that also updates connection status
 
         Args:
-            raw (bool): if True, doesn't zero the datagram or update connection status
+            raw (bool): if True, doesn't zero the datagram
             smooth (int): how many datagrams to smooth over
 
         Returns:
             The next datagram on the deque, or None if unavailable.
         """
-        if not self._dirty: return self._last_datagram
         next_datagram = self.peekDatagram(raw=raw, smooth=smooth)
-        if raw: return next_datagram
         if next_datagram is None: return self._last_datagram
         # check if the next datagram is new
         if (self._last_datagram is None
             or next_datagram != self._last_datagram):
             self._last_datagram = next_datagram
             self._last_datagram_time = time.time()
-            self._dirty = True
-        else:
-            self._dirty = False
         return self._last_datagram.copy()
 
     @property
@@ -531,12 +538,11 @@ class IMUController(IMU):
 
     def connected(self):
         """queries and returns connection status"""
-        if time.time() - self._last_datagram_time < 5:
-            return True
-        else:
+        self.next()
+        if time.time() - self._last_datagram_time > 5:
             self._last_datagram = None
-            self._dirty = True
-        return False
+            return False
+        return True
 
     def calibrate(self, *args, **kwargs):
         """calibrates using passed in args OR the next datagram and resets the movement frame"""
@@ -546,7 +552,6 @@ class IMUController(IMU):
             super().calibrate(**next_datagram)
         else:
             super().calibrate(*args, **kwargs)
-        self._dirty = True
         self.resetFrame()
 
     # easy controller methods - query controller speed, gyro, facing
@@ -633,7 +638,7 @@ class IMUController(IMU):
                 datagram processing
 
         Returns:
-            True if where the IMU is pointing is close t the target point
+            True if where the IMU is pointing is close to the target point
         """
 
         if pointing_at is None and datagram is None:
@@ -981,30 +986,17 @@ class MockMugicDevice(MugicDevice):
         if datafile is None and port is None:
             print("Warning: blank MockMugicDevice!")
 
-    @property
-    def dirty(self):
-        if self._next_datagram_is_available():
-            self._dirty = True
-        return self._dirty
-
-    @dirty.setter
-    def dirty(self, val:bool):
-        self._dirty = val
-
     def _datagram_is_ready(self, datagram):
         if datagram is None: return False
         elapsed = time.time() - self._start_time + self._base_time/1000
         datagram_time = datagram['seconds']/1000
         if elapsed < datagram_time: return False
-        self._connected = True
-        self._dirty = True
         return True
 
     def _next_datagram_is_available(self):
         if len(self._data) == 0: return False
         top = self._data[-1]
         if not self._datagram_is_ready(top): return False
-        self._connected = True
         return True
 
     def popDatagram(self, raw=False, smooth=3):

@@ -341,7 +341,7 @@ def _viewMugicDevice(mugic_device):
             elif event.key == pygame.K_l:
                 mugic_device.toggleLegacy()
         state = pygame.key.get_pressed()
-        rot_amount = pi/180
+        rot_amount = pi/90
         if state[pygame.K_a]:
             mugic_display.rotateImageX(-rot_amount)
         elif state[pygame.K_d]:

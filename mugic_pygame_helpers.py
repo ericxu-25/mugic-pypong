@@ -22,7 +22,8 @@ MONOSPACE = pygame.font.match_font(["inconsolata", "consolas", "monospace"])
 
 class Color:
     black = (0,0,0)
-    darkgrey = (50,50,60)
+    darkgrey = (25,25,40)
+    grey = (50,50,60)
     lightgrey = (150,150,160)
     white = (255, 255, 255)
     green = (0, 255, 0)
