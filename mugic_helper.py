@@ -6,7 +6,7 @@ from mugic_pygame_helpers import Window, WindowScreen, TextSprite, Color, MONOSP
 def _log_scale(number):
     return (math.log(abs(number)+1)/3.0) * sign(number)
 
-class IMUDisplay:
+class MugicDisplay:
     def __init__(self, imu, w=100, h=100):
         self._imu = imu
         self._init_text()
@@ -71,33 +71,28 @@ class IMUDisplay:
             self._camera.rotateX(angle)
         except AttributeError:
             self._init_image_objects()
-        self._imu.dirty = True
 
     def rotateImageY(self, angle=1):
         try:
             self._camera.rotateY(angle)
         except AttributeError:
             self._init_image_objects()
-        self._imu.dirty = True
 
     def rotateImageZ(self, angle=1):
         try:
             self._camera.rotateZ(angle)
         except AttributeError:
             self._init_image_objects()
-        self._imu.dirty = True
 
     def zoomImage(self, distance):
         try:
             self._camera.zoom(distance)
         except AttributeError:
             self._init_image_objects()
-        self._imu.dirty = True
 
     def resetImage(self):
         del self._image_cube
         self._init_image_objects()
-        self._imu.dirty = True
 
     def _init_image_objects(self):
         if hasattr(self, '_image_cube'): return
@@ -122,7 +117,6 @@ class IMUDisplay:
 
     def getImage(self, w=None, h=None, datagram=None):
         w, h = self._set_image_size(w, h)
-        if not self._imu.dirty: return self._image
         try:
             _ = self._image_cube
         except AttributeError as e:
@@ -130,6 +124,9 @@ class IMUDisplay:
             self._init_image_objects()
             return self.getImage(w, h)
         self._image.fill(Color.black)
+        # apply datagram transformations
+        if datagram is None:
+            datagram = self._imu.peekDatagram()
         if not self._imu.connected():
             pygame.draw.circle(self._image,
                                Color.red,
@@ -142,9 +139,6 @@ class IMUDisplay:
                                Color.green,
                                (w-w//16, h-h//16),
                                max(w//64, 3))
-        # apply datagram transformations
-        if datagram is None:
-            datagram = self._imu.peekDatagram()
         if datagram is not None:
             data_quat = self._imu.quat(datagram)
             accel_data = self._imu.accel(datagram) * 0.1
@@ -173,7 +167,6 @@ class IMUDisplay:
     # displays two graphs - accelerometer and gyrometer
     def getActionImage(self, w=None, h=None, datagram=None):
         w, h = self._set_image_size(w, h)
-        if not self._imu.dirty: return self._action_image
         try:
             _ = self._image_cube
         except AttributeError as e:
@@ -238,9 +231,10 @@ class IMUDisplay:
         self._action_format_text += "Pointing: {:3s}\nYaw {:3s} Pitch {:3s} Roll {:3s}\n"
         self._action_format_text += "Thrust: {:>6.2f}, Swing:{:>6.2f}\n"
 
-    def getDataText(self):
-        if not self._imu.dirty: return self._text
-        md = self._imu.next(raw=False)
+    def getDataText(self, datagram=None):
+        if datagram is None:
+            md = self._imu.peekDatagram()
+        else: md = datagram
         if md is None: return self._text
         quat = "{:>5.2f}, {:>5.2f}, {:>5.2f}, {:>5.2f}"\
                 .format(md['QW'], md['QX'], md['QY'], md['QZ'])
@@ -260,15 +254,15 @@ class IMUDisplay:
         self._text = str(self._imu) + '\n' + self._text
         return self._text
 
-    def getActionText(self):
-        if not self._imu.dirty: return self._action_text
-        datagram = self._imu.next(raw=False)
+    def getActionText(self, datagram=None):
+        if datagram is None:
+            datagram = self._imu.next(raw=False)
         if datagram is None: return self._action_text
         moving = ", ".join(self._imu.moving(text=True, datagram=datagram)) or "NO"
         rotating = ", ".join(self._imu.rotating(text=True, datagram=datagram)) or "NO"
-        yawing = ", ".join(self._imu.yawing(text=True, datagram=datagram)) or "NO"
-        pitching = ", ".join(self._imu.pitching(text=True, datagram=datagram))
-        rolling = ", ".join(self._imu.rolling(text=True, datagram=datagram))
+        yawing = ", ".join(self._imu.yawed(text=True, datagram=datagram)) or "NO"
+        pitching = ", ".join(self._imu.pitched(text=True, datagram=datagram))
+        rolling = ", ".join(self._imu.rolled(text=True, datagram=datagram))
         pointing = ", ".join(self._imu.pointing(text=True, datagram=datagram))
         thrust = self._imu.thrustAccel(datagram=datagram)
         swing = self._imu.swingAccel(datagram=datagram)
@@ -289,7 +283,6 @@ class IMUDisplay:
 
 
 def _viewMugicDevice(mugic_device):
-    pygame.init()
     # window setup
     window_size = (1000, 500)
     pane_size = (500, 500)
@@ -299,7 +292,7 @@ def _viewMugicDevice(mugic_device):
     frames = 0
     ticks = pygame.time.get_ticks()
     # mugic display setup
-    mugic_display = IMUDisplay(mugic_device)
+    mugic_display = MugicDisplay(mugic_device)
     mugic_display.setImageSize(*pane_size)
     # object setup
     display_screen = WindowScreen(*window_size)
@@ -320,7 +313,7 @@ def _viewMugicDevice(mugic_device):
     display_screen._redraw()
     pygame.display.flip()
     # variables
-    last_datagram = list()
+    last_datagram = None
     fps_value = 0
     # main loop
     while True:
@@ -332,7 +325,6 @@ def _viewMugicDevice(mugic_device):
             break
         elif event.type == pygame.VIDEORESIZE:
             Window()._resize_window(event.w, event.h)
-            mugic_device.dirty = True
         elif event.type == pygame.KEYDOWN:
             if event.key == pygame.K_f:
                 mugic_data_text.toggleVisibility()
@@ -366,15 +358,14 @@ def _viewMugicDevice(mugic_device):
             ticks = pygame.time.get_ticks() - 1
 
         next_datagram = mugic_device.next(raw=False)
-        if next_datagram is not None and next_datagram.values() != last_datagram:
-            last_datagram = list(next_datagram.values())
+        if mugic_device.newer(next_datagram, last_datagram):
+            last_datagram = next_datagram
             frames += 1
-            mugic_device.dirty = True
             fps_value = ((frames*1000)/(pygame.time.get_ticks()-ticks))
             if frames < 20:
                 mugic_device.autoDetectMugicType()
 
-        if mugic_device.dirty:
+        if mugic_device.connected():
             mugic_image = mugic_display.getImage(datagram=next_datagram)
             action_image = mugic_display.getActionImage(datagram=next_datagram)
             display_screen._redraw()
@@ -385,15 +376,13 @@ def _viewMugicDevice(mugic_device):
             display.blit(mugic_image, (0, 0))
             display.blit(action_image, (500*display_screen._scale, 0))
             if mugic_data_text.visible:
-                mugic_data_text.setText(mugic_display.getDataText())
+                mugic_data_text.setText(mugic_display.getDataText(next_datagram))
             if mugic_movement_text.visible:
-                mugic_movement_text.setText(mugic_display.getActionText())
-            mugic_device.dirty = False
+                mugic_movement_text.setText(mugic_display.getActionText(next_datagram))
         else:
             time.sleep(.01)
         fps_text.setText(round(fps_value, 3))
         pygame.display.flip()
-    pygame.quit()
 
 
 # MAIN FUNCTION - for use with testing / recording
@@ -412,10 +401,9 @@ def main():
     args = parser.parse_args()
     mugic = None
     if args.record:
-        mugic = MugicDevice(port=args.port, buffer_size=None)
-        _recordMugicDevice(args.port, args.datafile, args.seconds)
-    if args.playback:
-        mugic = MockMugicDevice(datafile=args.datafile)
+        mugic = recordMugicDevice(args.port, args.datafile, args.seconds)
+    elif args.playback:
+        mugic = MockMugicDevice(port=args.port, datafile=args.datafile)
     if mugic is None:
         mugic = MugicDevice(port=args.port)
     print(mugic)
@@ -425,8 +413,10 @@ def main():
     print("* C to zero the values, R to reset orientation")
     print("* F to show raw values, G to show interpreted movements")
     print("* L to switch between Mugic 1.0 and Mugic 2.0")
+    pygame.init()
     _viewMugicDevice(mugic)
-
+    mugic.close()
+    pygame.quit()
 
 if __name__ == "__main__":
     main()

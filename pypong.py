@@ -952,8 +952,8 @@ class MugicPongGame(PongGame):
         super()._reset()
 
     def _init_mugic_image(self):
-        self.p1_mugic_display = IMUDisplay(self.mugic_player_1)
-        self.p2_mugic_display = IMUDisplay(self.mugic_player_2)
+        self.p1_mugic_display = MugicDisplay(self.mugic_player_1)
+        self.p2_mugic_display = MugicDisplay(self.mugic_player_2)
         p1_tab1 = self.debug_screen_left.getTab(0)
         p1_tab1.base_background.fill(Color.black)
         p2_tab1 = self.debug_screen_right.getTab(0)
