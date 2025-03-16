@@ -70,7 +70,7 @@ RESOURCES
 
 QUICKSTART
     * run the mugic_display.py for an visualization
-    * play our example project - pypong.py!
+    * play our example project! - pypong.py
 
 TODO:
     * implement reading from usb device

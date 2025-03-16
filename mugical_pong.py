@@ -678,14 +678,14 @@ class PongGame(Game):
         self.menu_title_text.layer = 4
         self._add_sprite(self.menu_title_text)
         self.menu_title_text.hide()
-        self.menu_title_text.setFontSize(80)
+        self.menu_title_text.setFontSize(120)
         self.menu_title_text.setFormatString("{}")
         self.menu_title_text.bold = True
         self.menu_subtitle_text = TextSprite(self)
         self.menu_subtitle_text.layer = 4
         self._add_sprite(self.menu_subtitle_text)
         self.menu_subtitle_text.hide()
-        self.menu_subtitle_text.setFontSize(30)
+        self.menu_subtitle_text.setFontSize(40)
         self.menu_subtitle_text.setFormatString("{}")
         self.menu_subtitle_text.italic = True
         self.menu_background_sprite = Sprite(self)
@@ -1187,11 +1187,11 @@ Mugic Controls:
 * press 1 or 2 to activate CPU
 * point up/down to move striker
 * twist right/left to rotate striker
-* stab in pointing direction
+* stab in pointing direction to swing
 * shake to launch striker
 
-- Press P to continue, R to reset
-- Press M to return to Menu
+Press P to continue, R to reset
+Press M to return to Menu
 """
         self._draw_menu_screen(title_text, instruction_text, background=Color.black)
 
