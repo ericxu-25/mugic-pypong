@@ -1,12 +1,13 @@
+"""mugic_display.py - module used for displaying the mugic and all its data"""
 from mugic import *
 import argparse
 import pygame
-from mugic_pygame_helpers import Window, WindowScreen, TextSprite, Color, MONOSPACE
+from pygame_helpers import Window, WindowScreen, TextSprite, Color, MONOSPACE
 
 def _log_scale(number):
     return (math.log(abs(number)+1)/3.0) * sign(number)
 
-class MugicDisplay:
+class IMUControllerDisplay:
     def __init__(self, imu, w=100, h=100):
         self._imu = imu
         self._init_text()
@@ -223,6 +224,63 @@ class MugicDisplay:
         self._text = "No Connection"
         self._action_text = "No Connection"
         data_labels= [" quat", "euler", "accel",
+                      " gyro", " magn", "frame"]
+        self._data_format_text = '\n'.join(
+                [value+": {}" for value in data_labels])
+        self._action_format_text = "Moving: {}\nRotating: {}\n"
+        self._action_format_text += "Pointing: {:3s}\nYaw {:3s} Pitch {:3s} Roll {:3s}\n"
+        self._action_format_text += "Thrust: {:>6.2f}, Swing:{:>6.2f}\n"
+
+    def getDataText(self, datagram=None):
+        if datagram is None:
+            md = self._imu.peekDatagram()
+        else: md = datagram
+        if md is None: return self._text
+        quat = "{:>5.2f}, {:>5.2f}, {:>5.2f}, {:>5.2f}"\
+                .format(md['QW'], md['QX'], md['QY'], md['QZ'])
+        data_row = "{:>6.2f}, {:>6.2f}, {:>6.2f}"
+        euler = data_row.format(md['EX'], md['EY'], md['EZ'])
+        accel = data_row.format(md['AX'], md['AY'], md['AZ'])
+        gyro= data_row.format(md['GX'], md['GY'], md['GZ'])
+        mag = data_row.format(md['MX'], md['MY'], md['MZ'])
+        frame = md['_seq']
+        self._text = self._data_format_text.format(quat, euler, accel, gyro,
+                                                   mag, frame)
+        self._text = str(self._imu) + '\n' + self._text
+        return self._text
+
+    def getActionText(self, datagram=None):
+        if datagram is None:
+            datagram = self._imu.next(raw=False)
+        if datagram is None: return self._action_text
+        moving = ", ".join(self._imu.moving(text=True, datagram=datagram)) or "NO"
+        rotating = ", ".join(self._imu.rotating(text=True, datagram=datagram)) or "NO"
+        yawing = ", ".join(self._imu.yawed(text=True, datagram=datagram)) or "NO"
+        pitching = ", ".join(self._imu.pitched(text=True, datagram=datagram))
+        rolling = ", ".join(self._imu.rolled(text=True, datagram=datagram))
+        pointing = ", ".join(self._imu.pointing(text=True, datagram=datagram))
+        thrust = self._imu.thrustAccel(datagram=datagram)
+        swing = self._imu.swingAccel(datagram=datagram)
+        self._action_text = self._action_format_text\
+                .format(moving, rotating,
+                        pointing, yawing,
+                        pitching, rolling,
+                        thrust, swing)
+        return self._action_text
+
+    @property
+    def image(self):
+        return self.getImage()
+
+    @property
+    def text(self):
+        return self.getDataText() + "\n" + self.getActionText()
+
+class MugicDisplay(IMUControllerDisplay):
+    def _init_text(self):
+        self._text = "No Connection"
+        self._action_text = "No Connection"
+        data_labels= [" quat", "euler", "accel",
                       " gyro", " magn",
                       "battery", "frame", "calib (SAGM)"]
         self._data_format_text = '\n'.join(
@@ -254,35 +312,7 @@ class MugicDisplay:
         self._text = str(self._imu) + '\n' + self._text
         return self._text
 
-    def getActionText(self, datagram=None):
-        if datagram is None:
-            datagram = self._imu.next(raw=False)
-        if datagram is None: return self._action_text
-        moving = ", ".join(self._imu.moving(text=True, datagram=datagram)) or "NO"
-        rotating = ", ".join(self._imu.rotating(text=True, datagram=datagram)) or "NO"
-        yawing = ", ".join(self._imu.yawed(text=True, datagram=datagram)) or "NO"
-        pitching = ", ".join(self._imu.pitched(text=True, datagram=datagram))
-        rolling = ", ".join(self._imu.rolled(text=True, datagram=datagram))
-        pointing = ", ".join(self._imu.pointing(text=True, datagram=datagram))
-        thrust = self._imu.thrustAccel(datagram=datagram)
-        swing = self._imu.swingAccel(datagram=datagram)
-        self._action_text = self._action_format_text\
-                .format(moving, rotating,
-                        pointing, yawing,
-                        pitching, rolling,
-                        thrust, swing)
-        return self._action_text
-
-    @property
-    def image(self):
-        return self.getImage()
-
-    @property
-    def text(self):
-        return self.getDataText() + "\n" + self.getActionText()
-
-
-def _viewMugicDevice(mugic_device):
+def viewMugicDevice(mugic_device):
     # window setup
     window_size = (1000, 500)
     pane_size = (500, 500)
@@ -387,7 +417,8 @@ def _viewMugicDevice(mugic_device):
 
 # MAIN FUNCTION - for use with testing / recording
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+            description='visualization of Mugic IMU data')
     parser.add_argument('port', type=int, default=4000, nargs="?",
                         help="port of the mugic device to connect to, default 4000")
     parser.add_argument('-p', '--playback', action='store_true',
@@ -414,7 +445,7 @@ def main():
     print("* F to show raw values, G to show interpreted movements")
     print("* L to switch between Mugic 1.0 and Mugic 2.0")
     pygame.init()
-    _viewMugicDevice(mugic)
+    viewMugicDevice(mugic)
     mugic.close()
     pygame.quit()
 

@@ -1,5 +1,5 @@
-from mugic_pygame_helpers import *
-from mugic_helper import *
+from pygame_helpers import *
+from mugic_display import *
 from mugic import *
 
 # Basic Controls (keyboard)
@@ -10,7 +10,8 @@ from mugic import *
 # - point towards ceiling/floor to control up/down
 # - twist right/left to change rotation
 # - tilt fully down/up to continue to rotate
-# - shake the Mugic to bring it back to the center
+# - shake the Mugic launch striker forward
+# - thrust Mugic forward (in pointing direction)
 
 
 # PONG implementation
@@ -892,17 +893,22 @@ class MugicPongGame(PongGame):
     striker_speed = 30
     ball_mass = 20
     striker_grip = 10
-    striker_size = (50, 150)
+    striker_size = (40, 150)
     ball_size = 12
 
-    def __init__(self, w, h):
+    def __init__(self, w, h, port1=4000, port2=4001):
         super().__init__(w, h)
-        self.mugic_player_1 = MugicDevice(port=4000)
-        self.mugic_player_2 = MugicDevice(port=4001)
+        self.mugic_player_1 = MugicDevice(port=port1)
+        self.mugic_player_2 = MugicDevice(port=port2)
         self._init_mugic_image()
         self._init_mugic_text()
         self._current_screen = None
         self._frame_count = 0
+
+    def _stop(self):
+        super()._stop()
+        self.mugic_player_1.close()
+        self.mugic_player_2.close()
 
     def _initialize_sprites(self):
         super()._initialize_sprites()
@@ -963,7 +969,7 @@ class MugicPongGame(PongGame):
             # control position with the pointing angle
             m1_point = m1.pointingAt(m1_data)
             # fit the pointing values (-1 to 1) to screen position
-            targetY = self._height//2 - int(m1_point[2] * self._height//2)
+            targetY = self._height//2 - int(m1_point[2] * self._height//2 * 1.2)
             targetX = self._width//2 - int(m1_point[1] * self._width//2)
             self.p1_y = targetY
             self.p1_x = targetX
@@ -989,7 +995,7 @@ class MugicPongGame(PongGame):
             self.p2_lm = False
             # control position with the pointing angle
             m2_point = m2.pointingAt(m2_data)
-            targetY = self._height//2 - int(m2_point[2] * self._height//2)
+            targetY = self._height//2 - int(m2_point[2] * self._height//2 * 1.2)
             targetX = self._width//2 - int(m2_point[1] * self._width//2)
             self.p2_y = targetY
             self.p2_x = targetX
@@ -1181,7 +1187,7 @@ Mugic Controls:
 * press 1 or 2 to activate CPU
 * point up/down to move striker
 * twist right/left to rotate striker
-* thrust in the direction of pointing
+* stab in pointing direction
 * shake to launch striker
 
 - Press P to continue, R to reset
@@ -1235,6 +1241,16 @@ Project Sponsor:
 
 # MAIN
 def main():
+    parser = argparse.ArgumentParser(
+            description='Mugic demo project')
+    parser.add_argument('port1', type=int, default=4000, nargs="?",
+                        help="port of the first mugic device to connect to, default 4000")
+    parser.add_argument('port2', type=int, default=4001, nargs="?",
+                        help="port of the second mugic device to connect to, default 4001")
+    parser.add_argument('--legacy', action='store_true',
+                        help="play the version without Mugic controls")
+    args = parser.parse_args()
+
     # disable warnings
     logging.basicConfig(level=logging.ERROR)
     # define base resolution
@@ -1242,11 +1258,12 @@ def main():
     Window().rescale(WIDTH, HEIGHT)
     Window().resize(0.5)
     pygame.init()
-    #PONG = PongGame(WIDTH, HEIGHT)
-    PONG = MugicPongGame(WIDTH, HEIGHT)
+    if args.legacy:
+        PONG = PongGame(WIDTH, HEIGHT)
+    else:
+        PONG = MugicPongGame(WIDTH, HEIGHT, args.port1, args.port2)
     PONG.start()
     pygame.quit()
 
 if __name__ == "__main__":
-    print("running pypong!")
     main()

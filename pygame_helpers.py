@@ -1,9 +1,12 @@
+"""pygame_helpers.py - collection of custom helper classes for pygame"""
+
 import time
 import pygame
 import math
 import random
 import colorsys
 import logging
+
 # Resources used as reference:
 # * geeksforgeeks.org/create-a-pong-game-in-python-pygame/
 # * https://www.pygame.org/docs/
@@ -566,6 +569,185 @@ class TextSprite(Sprite):
         self._renderText()
 
 
+# Screen manager
+class Window:
+    def __new__(cls, *args, **kwargs):
+        if not hasattr(cls, 'singleton'):
+            cls.singleton = super().__new__(cls, *args, **kwargs)
+            cls.singleton.initialize()
+        return cls.singleton
+
+    @property
+    def name(self):
+        return self._name
+
+    @name.setter
+    def name(self, name):
+        self._name = name
+        pygame.display.set_caption(self._name)
+
+    def initialize(self):
+        global WIDTH
+        global HEIGHT
+        self.name = "Nameless Window"
+        self.vsync = 1
+        self.games = set()
+        self.screens = set()
+        self.focused_screens= set()
+        self.fps = 30
+        self._init_window(WIDTH, HEIGHT)
+
+    def _init_window(self, w, h):
+        self._width = w
+        self._height = h
+        self.screen_ratio = self._width / self._height
+        self._scale = 1
+        self.base_background = pygame.Surface((w, h))
+        self.base_background.fill(Color.white)
+        self._resize_window(w, h)
+
+    def _handle_events(self):
+        for screen in self.focused_screens:
+            screen._handle_events()
+        for event in pygame.event.get():
+            self._handle_event(event)
+            for screen in self.focused_screens:
+                screen._handle_event(event)
+
+    def _handle_event(self, event):
+        if event.type == pygame.QUIT:
+            self.quit()
+        elif event.type == pygame.VIDEORESIZE:
+            self._resize_window(event.w, event.h)
+        elif event.type in (pygame.KEYDOWN, pygame.KEYUP):
+            self._handle_key(event)
+
+    def _handle_key(self, event):
+        key = Key(event)
+        if key == pygame.K_ESCAPE:
+            self.quit()
+
+    def _redraw(self):
+        for screen in self.screens:
+            screen._redraw()
+
+    def _update_games(self):
+        for game in self.games:
+            game._tick()
+
+    def _render_screens(self):
+        for screen in self.screens:
+            screen._render()
+        pygame.display.update()
+
+    def _resize_window(self, w, h):
+        global WIDTH
+        global HEIGHT
+        if (WIDTH - w) != 0:
+            WIDTH = w
+            HEIGHT = (1.0/self.screen_ratio) * w
+        else:
+            HEIGHT = h
+            WIDTH = h * self.screen_ratio
+        WIDTH = round(WIDTH)
+        HEIGHT = round(HEIGHT)
+        self.window = pygame.display.set_mode(
+                (WIDTH, HEIGHT),
+                pygame.RESIZABLE, vsync = self.vsync)
+        pygame.display.set_caption(self.name)
+        self._scale = (float(WIDTH) /self._width)
+        self.background = pygame.transform.scale(
+                self.base_background,
+                (WIDTH, HEIGHT))
+        self.window.fill(Color.black)
+        self.window.blit(self.background, (0, 0))
+        for screen in self.screens:
+            screen._resize(self._scale)
+            self._update_screen_subsurface(screen)
+        self.refresh()
+
+    def _update_screen_subsurface(self, screen):
+        try:
+            screen.screen = self.window.subsurface(screen.rect)
+        except ValueError as e:
+            logging.warning(f"ValueError: {e}\nwhile attempting to update tab: {screen.name}")
+            screen.screen = pygame.Surface((screen.width, screen.height))
+
+    def rescale(self, w, h):
+        scale = self._scale
+        self._init_window(w, h)
+        self._resize_window(w * scale, h * scale)
+
+    def resize(self, scale):
+        self._resize_window(self._width * scale, 0)
+
+    def refresh(self):
+        for screen in self.screens:
+            screen.refresh()
+        self._render_screens()
+
+    def setName(name):
+        self.name = name
+        pygame.display.set_caption(self.name)
+
+    def addGame(self, game, position = (0, 0), focus = True):
+        self.games.add(game)
+        self.addScreen(game, position, focus)
+
+    def addScreen(self, screen, position = (0, 0), focus = True):
+        self.screens.add(screen)
+        screen._resize(self._scale)
+        self.moveScreenTo(screen, *position)
+        self.focus(screen, focus)
+        return self
+
+    def removeScreen(self, screen):
+        self.screens.remove(screen)
+        self.focused_screens.remove(screen)
+        screen._position = (0, 0)
+        return self
+
+    def removeGame(self, game):
+        self.games.remove(game)
+        self.removeScreen(game)
+
+    def focus(self, screen, focus):
+        if focus: self.focused_screens.add(screen)
+        else: self.focused_screens.remove(screen)
+
+    def moveScreenTo(self, screen, x, y):
+        screen._position = (x, y)
+        self._update_screen_subsurface(screen)
+
+    def moveScreen(self, screen, dx, dy):
+        screen._position = (screen.position + dx,
+                            screen.position + dy)
+        self._update_screen_subsurface(screen)
+
+    def moveScreenCenterTo(self, screen, cx, cy):
+        screen._position = (cx - screen._width//2,
+                            cy - screen._height//2)
+        self._update_screen_subsurface(screen)
+
+    def start(self):
+        for game in self.games:
+            game._start()
+        self.clock = pygame.time.Clock()
+        self.stop = False
+        while not self.stop:
+            self._tick()
+
+    def quit(self):
+        self.stop = True
+        for game in self.games:
+            game._stop()
+
+    def _tick(self):
+        self._handle_events()
+        self._update_games()
+        self._render_screens()
+        last_tick = self.clock.tick(self.fps)
+
 # dynamic resizable surface with sprites and event handling
 class Screen:
     def __init__(self, w = None, h = None, padding = None):
@@ -746,6 +928,7 @@ class Screen:
     def _handle_key(self, event):
         return
 
+
 # Screen which works with the main Window
 class WindowScreen(Screen):
     def __init__(self, w = None, h = None, padding = None):
@@ -892,6 +1075,9 @@ class Game(WindowScreen):
     def _load(self):
         return
 
+    def _stop(self):
+        return
+
     def _start(self):
         self.refresh()
         self._reset()
@@ -916,182 +1102,4 @@ class Game(WindowScreen):
     def _tick(self):
         if self._pause == False:
             self._game_loop()
-
-# Screen manager
-class Window:
-    def __new__(cls, *args, **kwargs):
-        if not hasattr(cls, 'singleton'):
-            cls.singleton = super().__new__(cls, *args, **kwargs)
-            cls.singleton.initialize()
-        return cls.singleton
-
-    @property
-    def name(self):
-        return self._name
-
-    @name.setter
-    def name(self, name):
-        self._name = name
-        pygame.display.set_caption(self._name)
-
-    def initialize(self):
-        global WIDTH
-        global HEIGHT
-        self.name = "Nameless Window"
-        self.vsync = 1
-        self.games = set()
-        self.screens = set()
-        self.focused_screens= set()
-        self.fps = 30
-        self._init_window(WIDTH, HEIGHT)
-
-    def _init_window(self, w, h):
-        self._width = w
-        self._height = h
-        self.screen_ratio = self._width / self._height
-        self._scale = 1
-        self.base_background = pygame.Surface((w, h))
-        self.base_background.fill(Color.white)
-        self._resize_window(w, h)
-
-    def _handle_events(self):
-        for screen in self.focused_screens:
-            screen._handle_events()
-        for event in pygame.event.get():
-            self._handle_event(event)
-            for screen in self.focused_screens:
-                screen._handle_event(event)
-
-    def _handle_event(self, event):
-        if event.type == pygame.QUIT:
-            self.quit()
-        elif event.type == pygame.VIDEORESIZE:
-            self._resize_window(event.w, event.h)
-        elif event.type in (pygame.KEYDOWN, pygame.KEYUP):
-            self._handle_key(event)
-
-    def _handle_key(self, event):
-        key = Key(event)
-        if key == pygame.K_ESCAPE:
-            self.quit()
-
-    def _redraw(self):
-        for screen in self.screens:
-            screen._redraw()
-
-    def _update_games(self):
-        for game in self.games:
-            game._tick()
-
-    def _render_screens(self):
-        for screen in self.screens:
-            screen._render()
-        pygame.display.update()
-
-    def _resize_window(self, w, h):
-        global WIDTH
-        global HEIGHT
-        if (WIDTH - w) != 0:
-            WIDTH = w
-            HEIGHT = (1.0/self.screen_ratio) * w
-        else:
-            HEIGHT = h
-            WIDTH = h * self.screen_ratio
-        WIDTH = round(WIDTH)
-        HEIGHT = round(HEIGHT)
-        self.window = pygame.display.set_mode(
-                (WIDTH, HEIGHT),
-                pygame.RESIZABLE, vsync = self.vsync)
-        pygame.display.set_caption(self.name)
-        self._scale = (float(WIDTH) /self._width)
-        self.background = pygame.transform.scale(
-                self.base_background,
-                (WIDTH, HEIGHT))
-        self.window.fill(Color.black)
-        self.window.blit(self.background, (0, 0))
-        for screen in self.screens:
-            screen._resize(self._scale)
-            self._update_screen_subsurface(screen)
-        self.refresh()
-
-    def _update_screen_subsurface(self, screen):
-        try:
-            screen.screen = self.window.subsurface(screen.rect)
-        except ValueError as e:
-            logging.warning(f"ValueError: {e}\nwhile attempting to update tab: {screen.name}")
-            screen.screen = pygame.Surface((screen.width, screen.height))
-
-    def rescale(self, w, h):
-        scale = self._scale
-        self._init_window(w, h)
-        self._resize_window(w * scale, h * scale)
-
-    def resize(self, scale):
-        self._resize_window(self._width * scale, 0)
-
-    def refresh(self):
-        for screen in self.screens:
-            screen.refresh()
-        self._render_screens()
-
-    def setName(name):
-        self.name = name
-        pygame.display.set_caption(self.name)
-
-    def addGame(self, game: Game, position = (0, 0), focus = True):
-        self.games.add(game)
-        self.addScreen(game, position, focus)
-
-    def addScreen(self, screen, position = (0, 0), focus = True):
-        self.screens.add(screen)
-        screen._resize(self._scale)
-        self.moveScreenTo(screen, *position)
-        self.focus(screen, focus)
-        return self
-
-    def removeScreen(self, screen):
-        self.screens.remove(screen)
-        self.focused_screens.remove(screen)
-        screen._position = (0, 0)
-        return self
-
-    def removeGame(self, game):
-        self.games.remove(game)
-        self.removeScreen(game)
-
-    def focus(self, screen, focus):
-        if focus: self.focused_screens.add(screen)
-        else: self.focused_screens.remove(screen)
-
-    def moveScreenTo(self, screen, x, y):
-        screen._position = (x, y)
-        self._update_screen_subsurface(screen)
-
-    def moveScreen(self, screen, dx, dy):
-        screen._position = (screen.position + dx,
-                            screen.position + dy)
-        self._update_screen_subsurface(screen)
-
-    def moveScreenCenterTo(self, screen, cx, cy):
-        screen._position = (cx - screen._width//2,
-                            cy - screen._height//2)
-        self._update_screen_subsurface(screen)
-
-    def start(self):
-        for game in self.games:
-            game._start()
-        self.clock = pygame.time.Clock()
-        self.stop = False
-        while not self.stop:
-            self._tick()
-
-    def quit(self):
-        self.stop = True
-
-    def _tick(self):
-        self._handle_events()
-        self._update_games()
-        self._render_screens()
-        last_tick = self.clock.tick(self.fps)
-
 

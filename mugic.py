@@ -1,6 +1,53 @@
 """
 mugic.py - python module used for interfacing with mugic IMU
 
+MODULE BREAKDOWN
+=== mugic.py ===
+python module used for interfacing with the Mugic IMU
+Classes
+    IMU - IMU data manager class
+    |
+    +---IMUController - IMU with data interpretation methods
+        |
+        +---MugicDevice - Mugic specific IMUController
+            |
+            +---MockMugicDevice - MugicDevice that can read from a text file
+Methods
+    recordMugicDevice  - record output from a MugicDevice to a text file
+
+=== mugic_display.py ===
+python module used to display the Mugic IMU
+Classes
+    IMUControllerDisplay - Translates IMUController data to an image and text
+    |
+    +---MugicDisplay - IMUControllerDisplay that supports Mugic specific data
+
+Methods
+    viewMugicDevice - creates a pygame window to display a MugicDevice
+    main - based on arguments, can display, record, or playback a mugic device
+
+=== pygame_helpers.py ===
+collection of custom helper classes for pygame
+Classes
+    Color - simple class to store RGB values for later use
+    Key - simple class to package pygame key inputs
+    Sprite - subclass of pygame.sprite.DirtySprite which allows for dynamic resizing
+    +---GameSprite - Sprite alias
+    +---TextSprite - Sprite to display formatted text
+    Window - resizable pygame sprite and display manager
+    Screen - resizable pygame display
+    +---WindowScreen - Screen compatible with Window subsurfacing
+        +---DisplayScreen - WindowScreen which has methods to subdivide itself into tabs
+        +---Game - WindowScreen which contains basic game logic
+
+=== mugical_pong.py ===
+Pong-style game made in pygame which uses Mugic motion controls
+Classes
+    Striker - GameSprite that represents a Pong paddle
+    Ball - GameSprite that represents a Pong ball
+    PongGame - barebones implementation with keyboard controls
+    +---MugicPongGame - minimal implementation with mugic controls
+
 ABOUT THE DEVELOPERS
     Team Mugical - UCI Informatics Senior Capstone Group, 2024-2025
     * Members: Eric Xu, Melody Chan-Yoeun, Bryan Matta Villatoro,
@@ -22,7 +69,7 @@ RESOURCES
     * https://github.com/ericxu-25/mugic-pypong
 
 QUICKSTART
-    * see the mugic_helper.py file for a basic example
+    * run the mugic_display.py for an visualization
     * play our example project - pypong.py!
 
 TODO:
@@ -32,7 +79,7 @@ TODO:
 
 WARNINGS:
     Testing was only performed with the Mugic 1.0 and 2.0 devices. The IMU and IMUController
-    classes will need to be modified if you plan to utilize them with a different controller.
+    classes may not be compatible with other devices, and will probably need to be subclassed.
 """
 
 #########################################
