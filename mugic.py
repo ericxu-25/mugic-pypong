@@ -423,6 +423,14 @@ class IMUController(IMU):
     _accel_low_pass = array('f', [3, 5, 5])
     _max_frame_size = 2
 
+    # bits for interpretation
+    UP = 0b1
+    DN = 0b10
+    RT = 0b100
+    LT = 0b1000
+    FW = TR = 0b10000
+    BW = TL = 0b100000
+
     def __init__(self, buffer_size=10):
         super().__init__(buffer_size)
         self._last_datagram = None
@@ -447,6 +455,13 @@ class IMUController(IMU):
 
          For a more intuitive understanding of this, pay attention to the accelerometer graph values
          for Z (blue) when moving the sensor up and down.
+
+         I ran out of time to polish this method more. Things I think should be added are:
+             * better calibration
+             * alternative version for relative acceleration
+             * more consistent results
+
+        At time of writing, the frame movement data is only gets direction right about half the time.
         """
         # saves accelerometer max and min values
         accel = self.absoluteAccel(datagram)
@@ -461,7 +476,7 @@ class IMUController(IMU):
             if abs(accel[i]) < self._accel_low_pass[i]:
                 continue
             # skip if not a major component of the motion
-            if abs(accel[i]) < accel_magnitude / 27:
+            if abs(accel[i]) < accel_magnitude / 9:
                 continue
             # reset rising/falling if expired or start of a new edge
             if (time.time()-self._last_frame_update > self._max_frame_size or
@@ -571,7 +586,7 @@ class IMUController(IMU):
         self.resetFrame()
 
     # easy controller methods - query controller speed, gyro, facing
-    def _moving(self, axis, direction=1, threshold=0.01, datagram=None):
+    def _moving(self, axis, direction=1, threshold=0.1, datagram=None):
         """returns if the IMU was moving along an axis
 
         This method does not reset the last movement frame - that must be done manually once the
@@ -796,6 +811,7 @@ class IMUController(IMU):
         if rotating_bits & (1<<4): text.append("TR")
         if rotating_bits & (1<<5): text.append("TL")
         return text
+
 
     def pitched(self, text=False, **kwargs):
         """Returns bits or a list of strings corresponding to interpreted sensor pitch direction
