@@ -3,17 +3,11 @@ import pygame
 import math
 import random
 import colorsys
+import logging
 # Resources used as reference:
 # * geeksforgeeks.org/create-a-pong-game-in-python-pygame/
 # * https://www.pygame.org/docs/
 # * https://stackoverflow.com/questions/11603222/allowing-resizing-window-pygame
-
-# TODO list
-# * debug windows (1: game, 2: controller, 3: more controller)
-# * mugic controller module (calibration + implementation)
-# * springy striker (striker x velocity)
-# * sprite coloring support (ball color, striker color)
-# * port to godot
 
 # GLOBALS
 pygame.font.init()
@@ -37,10 +31,21 @@ class Color:
     _random_hue = random.random()
 
     @classmethod
-    def random(cls):
-        cls._random_hue = ((cls._random_hue * 360 + random.randint(50, 100))
-                           % 360 / 360.0)
-        r, g, b = colorsys.hsv_to_rgb(cls._random_hue, 1, 0.9)
+    def _inc_random_hue(cls, step_min = 0.01, step_max = 0.3):
+        cls._random_hue += (random.random() * (step_max - step_min) + step_min)
+        cls._random_hue %= 1.0
+
+    @classmethod
+    def random(cls, saturation=1, value=0.9):
+        cls._inc_random_hue()
+        r, g, b = colorsys.hsv_to_rgb(cls._random_hue, saturation, value)
+        return (r * 255, g * 255, b * 255)
+
+    @classmethod
+    def randomBetween(cls, min_hue, max_hue, saturation=1, value=0.9):
+        cls._inc_random_hue()
+        random_hue = cls._random_hue * (max_hue - min_hue) + min_hue
+        r, g, b = colorsys.hsv_to_rgb(random_hue, saturation, value)
         return (r * 255, g * 255, b * 255)
 
 WIDTH, HEIGHT = 1300, 600
@@ -102,14 +107,6 @@ class Sprite(pygame.sprite.DirtySprite):
         self.name = f"Sprite {self.sprite_id}"
         self._debug = False
         self._debug_screen = None
-
-    @property
-    def scale(self):
-        return self._scale
-
-    @scale.setter
-    def scale(self, val):
-        self._scale = val
 
     @property
     def _rect(self):
@@ -678,10 +675,6 @@ class Screen:
         return self._height/2
 
     @property
-    def fps(self):
-        return self._window.fps
-
-    @property
     def position(self):
         return (self._position[0] * self._scale,
                 self._position[1] * self._scale)
@@ -699,10 +692,6 @@ class Screen:
     @property
     def rect(self):
         return pygame.Rect(self.position, (self.abs_width, self.abs_height))
-
-    @fps.setter
-    def fps(self, fps):
-        self._window.fps = fps
 
     def __str__(self):
         return f"{self.name}: {self.base_rect}"
@@ -766,6 +755,14 @@ class WindowScreen(Screen):
         self.name = "window screen"
         self._window = Window()
 
+    @property
+    def fps(self):
+        return self._window.fps
+
+    @fps.setter
+    def fps(self, fps):
+        self._window.fps = fps
+
     def _render(self):
         self._draw_sprites()
         # if screen is not a subsurface, draw directly onto the window
@@ -777,7 +774,7 @@ class DisplayScreen(WindowScreen):
     def __init__(self, w = None, h = None, padding = None):
         self.tabs = list()
         super().__init__(w, h, padding)
-        self.base_background.fill(Color.red)
+        self.base_background.fill(Color.black)
 
     # returns the next available tab position (left to right)
     def _get_next_tab_position(self, tab_rect):
@@ -790,7 +787,7 @@ class DisplayScreen(WindowScreen):
             tab_rect.x = 0
             tab_rect.y += last_tab.height
         if not self.base_rect.contains(tab_rect):
-            print("addTab: Error fitting next tab!")
+            logging.error("addTab: Error fitting next tab!")
         return tab_rect.topleft
 
     def addTab(self, w, h = None, padding = (5, 5, 5, 5), position = None):
@@ -810,12 +807,11 @@ class DisplayScreen(WindowScreen):
         return len(self.tabs)
 
     def splitTabs(self, rows, columns=1):
-        tab_width = self._width/columns
-        tab_height = self._height/rows
+        tab_width = float(self._width)/columns
+        tab_height = float(self._height)/rows
         for row in range(rows):
             for col in range(columns):
                 self.addTab(tab_width, tab_height)
-
 
     def getTab(self, tab_num) -> pygame.Surface:
         if len(self.tabs) == 0: return None
@@ -858,8 +854,7 @@ class DisplayScreen(WindowScreen):
             try:
                 tab.screen = self.screen.subsurface(tab.rect)
             except ValueError as e:
-                print("ValueError:", e)
-                print("\twhile attempting to update tab:", tab)
+                logging.warning(f"ValueError: {e}\nwhile attempting to update tab: {str(tab)}")
                 tab.screen = pygame.Surface((tab.width, tab.height))
 
     def writeNewText(self, text, offset=(0, 0), tab = None):
@@ -906,6 +901,10 @@ class Game(WindowScreen):
 
     def pause(self):
         self._pause = True
+
+    def togglePause(self):
+        if self._pause: self.unpause()
+        else: self.pause()
 
     def start(self):
         self._window.start()
@@ -1008,6 +1007,7 @@ class Window:
         self.background = pygame.transform.scale(
                 self.base_background,
                 (WIDTH, HEIGHT))
+        self.window.fill(Color.black)
         self.window.blit(self.background, (0, 0))
         for screen in self.screens:
             screen._resize(self._scale)
@@ -1018,14 +1018,16 @@ class Window:
         try:
             screen.screen = self.window.subsurface(screen.rect)
         except ValueError as e:
-            print("ValueError:", e)
-            print("\twhile attempting to update screen:", screen.name)
+            logging.warning(f"ValueError: {e}\nwhile attempting to update tab: {screen.name}")
             screen.screen = pygame.Surface((screen.width, screen.height))
 
     def rescale(self, w, h):
         scale = self._scale
         self._init_window(w, h)
         self._resize_window(w * scale, h * scale)
+
+    def resize(self, scale):
+        self._resize_window(self._width * scale, 0)
 
     def refresh(self):
         for screen in self.screens:
@@ -1042,6 +1044,7 @@ class Window:
 
     def addScreen(self, screen, position = (0, 0), focus = True):
         self.screens.add(screen)
+        screen._resize(self._scale)
         self.moveScreenTo(screen, *position)
         self.focus(screen, focus)
         return self

@@ -56,7 +56,7 @@ import logging
 
 # HELPERS
 def sign(number):
-    return -1 if number < 0 else 1
+    return -1 if number < 0 else 1 if number > 0 else 0
 
 def points_are_close(p0, p1, threshold):
     """returns if two points are closer together than a threshold value"""
@@ -1112,11 +1112,10 @@ class MugicDevice(IMUController):
         """returns a string representation of the Mugic Device"""
         mugic_str = "Mugic 1.0" if self.legacy else "Mugic 2.0"
         if self._osc_server is None:
-            return f"{mugic_str} Device @ nowhere"
-        try:
-            return f"{mugic_str} Device @ {self._socket.getsockname()}"
-        except:
-            return f"{mugic_str} Device @ {self.port}"
+            return f"{mugic_str} @ nowhere"
+        if self.address != '0.0.0.0':
+            return f"{mugic_str} @ {self.address}:{self.port}"
+        return f"{mugic_str} @ {self.port}"
 
     def _smooth(self, datagrams, raw=False):
         """overrides moving average to ensure seqnum isn't affected"""
