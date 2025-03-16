@@ -1,3 +1,4 @@
+"""mugical_pong.py - Mugical Pong two player game"""
 from pygame_helpers import *
 from mugic_display import *
 from mugic import *
@@ -578,10 +579,10 @@ class PongGame(Game):
     ball_size = 10
     ball_mass = 15
 
-    def __init__(self, w, h = None):
+    def __init__(self, w, h = None, padding=(2, 2, 2, 2)):
         adjusted_width = w * 2 // 3
         side_width = (w - adjusted_width) / 2.0
-        super().__init__(adjusted_width, h, padding=(20, 20, 10, 10))
+        super().__init__(adjusted_width, h, padding=padding)
         self.base_background.fill(Color.black)
         self.name = "pong"
         self.fps = 60
@@ -675,14 +676,14 @@ class PongGame(Game):
 
         # setup menu sprites
         self.menu_title_text = TextSprite(self)
-        self.menu_title_text.layer = 4
+        self.menu_title_text.layer = 5
         self._add_sprite(self.menu_title_text)
         self.menu_title_text.hide()
         self.menu_title_text.setFontSize(120)
         self.menu_title_text.setFormatString("{}")
         self.menu_title_text.bold = True
         self.menu_subtitle_text = TextSprite(self)
-        self.menu_subtitle_text.layer = 4
+        self.menu_subtitle_text.layer = 5
         self._add_sprite(self.menu_subtitle_text)
         self.menu_subtitle_text.hide()
         self.menu_subtitle_text.setFontSize(40)
@@ -705,18 +706,24 @@ class PongGame(Game):
         self.menu_subtitle_text.y = (self.menu_title_text.y
                                      + self.menu_title_text.height + 10)
 
-    def _draw_menu_screen(self, title_text, subtitle_text, background=False):
+    def _draw_menu_screen(self, title_text, subtitle_text, background=None):
         self.menu_title_text.setText(title_text)
         self.menu_subtitle_text.setText(subtitle_text)
         self.menu_title_text.show()
         self.menu_subtitle_text.show()
         self._update_menu_text_position()
-        if background:
+        if background is not None:
             self.menu_background_sprite.show()
-        if type(background) is tuple:
+        if type(background) is tuple: # solid color background
+            self.menu_background_sprite.base_image.fill(background)
+            self.menu_background_sprite._update_image()
+        elif isinstance(background, pygame.Surface): # image background
             menu_background = pygame.Surface(self.screen_rect.size)
-            menu_background.fill(background)
-            self.menu_background_sprite.setImage(menu_background)
+            fit_scale = self.screen_rect.height/background.get_height()
+            background = pygame.transform.smoothscale_by(background, fit_scale)
+            centered = ((self.screen_rect.width - background.get_width())//2, 0)
+            self.menu_background_sprite.base_image.blit(background, centered)
+            self.menu_background_sprite._update_image()
         self._draw_sprites()
 
     def _hide_menu_screen(self):
@@ -734,7 +741,7 @@ class PongGame(Game):
         center = self._width // 2
         left = self._width // 8
         right = self._width - left
-        center_left = self._width // 4
+        center_left = self._width // 6
         center_right = self._width - center_left
         self.striker_left.moveCenterTo(left, middle)
         self.striker_right.moveCenterTo(right, middle)
@@ -884,7 +891,6 @@ class PongGame(Game):
         super().unpause()
         self._hide_menu_screen()
 
-
 # PONG GAME but with Mugic Controls
 class MugicPongGame(PongGame):
     # configuration values
@@ -896,8 +902,8 @@ class MugicPongGame(PongGame):
     striker_size = (40, 150)
     ball_size = 12
 
-    def __init__(self, w, h, port1=4000, port2=4001):
-        super().__init__(w, h)
+    def __init__(self, w, h, padding=(2, 2, 2, 2), port1=4000, port2=4001):
+        super().__init__(w, h, padding)
         self.mugic_player_1 = MugicDevice(port=port1)
         self.mugic_player_2 = MugicDevice(port=port2)
         self._init_mugic_image()
@@ -923,6 +929,43 @@ class MugicPongGame(PongGame):
         self.pointer_left.layer = -1
         self.pointer_left.hide()
         self._add_sprite(self.pointer_right, self.pointer_left)
+        # load image assets
+        group_photo = resource_path('assets/team_mugical.jpg')
+        mari_kimura= resource_path('assets/mari_kimura.jpg')
+        mugic_photo= resource_path('assets/mugic.jpg')
+        team_logo = resource_path('assets/mugical_logo.png')
+        mugical_background = resource_path('assets/mugical_bg.jpg')
+        _group_photo = pygame.image.load(group_photo).convert()
+        _mari_photo= pygame.image.load(mari_kimura).convert()
+        _mugic_photo= pygame.image.load(mugic_photo).convert()
+        _team_logo= pygame.image.load(team_logo).convert_alpha()
+        self._title_background = pygame.image.load(mugical_background).convert()
+        # internal class
+        class _BounceSprite(GameSprite):
+            def __init__(self, screen):
+                super().__init__(screen)
+                self.velocity = pygame.math.Vector2(random.random()+0.5, random.random()+0.5)
+                self.velocity *= (3 * random.random())
+                self.r = 100
+
+            def _bounce(self, wall_normal):
+                self.velocity.reflect_ip(wall_normal)
+
+            def update(self):
+                Ball.bounceOnWalls(self)
+                self.move(*self.velocity)
+
+        # create image sprites
+        self.credit_images = pygame.sprite.Group()
+        for image in [_group_photo, _mari_photo, _mugic_photo, _team_logo]:
+            image_sprite = _BounceSprite(self)
+            image_sprite.moveCenterTo(*self.center)
+            image_sprite.layer = 4
+            self.addSprite(image_sprite)
+            image_sprite.hide()
+            image = pygame.transform.smoothscale_by(image, (random.random()*50+250)/image.get_width())
+            image_sprite.setImage(image)
+            self.credit_images.add(image_sprite)
 
     def _initialize_controls(self):
         super()._initialize_controls()
@@ -1012,24 +1055,34 @@ class MugicPongGame(PongGame):
     def _controls(self):
         # Mugic player 1 controls
         if self.mugic_player_1.connected() and not self.p1_CPU:
+            # match pointer to actual mugic pointing position
             self.pointer_right.show()
             self.pointer_right.centery = self.p1_y
             self.pointer_right.rotateTo(self.striker_right.rotation)
+            # on thrust - swing forward
             if abs(self.p1_thrust) > abs(self.p1_swing):
                 self.p1_thrust = max(0, self.p1_thrust - 3) * 4
                 self.striker_right.impact_velocity -= min(self.p1_thrust, 8)
-                if self.p1_thrust > 10:
+                # if thrust is powerful enough, add light homing
+                if self.p1_thrust > 8:
                     for _ in range(3):
                         self.striker_right._moveTowardsBall()
+            # otherwise if jolted, launch forward (lock y position)
             elif self.p1_jolt:
-                self.striker_right.impact_velocity -= 10 + abs(25 * (self.pointer_right.x - self.ball.x)/self._width)
+                self.striker_right.impact_velocity -= 10
+                # scale based on distance from ball - launches further if the ball is further
+                self.striker_right.impact_velocity -= abs(25 * (self.pointer_right.x - self.ball.x)/self._width)
+            # aim assist - if close enough to ball move towards it
             close_to_ball = self.pointer_right.distanceTo(self.ball) < self._height // 6
             striker_close = abs(self.striker_right.centery - self.ball.centery) < self._height//6
             if close_to_ball and striker_close and not self.p1_jolt:
                 self.striker_right._moveTowardsBall()
             elif not self.p1_jolt:
+                # move double speed towards pointing position
                 self.striker_right._moveTowardsPoint(self.p1_y)
                 self.striker_right._moveTowardsPoint(self.p1_y)
+
+            # handle rotations
             if not (self.p1_rt or self.p1_lt):
                 self.striker_right._rotateTowardsAngle(-self.p1_rotz)
             else:
@@ -1037,7 +1090,7 @@ class MugicPongGame(PongGame):
                     self.striker_right._rotateRight()
                 if self.p1_lt:
                     self.striker_right._rotateLeft()
-        else:
+        else: # if not connected, use normal controls
             self.pointer_right.hide()
             self._handle_p1_controls()
 
@@ -1049,11 +1102,12 @@ class MugicPongGame(PongGame):
             if abs(self.p2_thrust) > abs(self.p2_swing):
                 self.p2_thrust = max(0, self.p2_thrust - 3) * 4
                 self.striker_left.impact_velocity += min(self.p2_thrust, 8)
-                if self.p2_thrust > 10:
+                if self.p2_thrust > 8:
                     for _ in range(3):
                         self.striker_left._moveTowardsBall()
             elif self.p2_jolt:
-                self.striker_left.impact_velocity += 10 + abs(25 * (self.pointer_left.x - self.ball.x)/self._width)
+                self.striker_left.impact_velocity += 10
+                self.striker_left.impact_velocity += abs(25 * (self.pointer_left.x - self.ball.x)/self._width)
             close_to_ball = self.pointer_left.distanceTo(self.ball) < self._height // 6
             striker_close = abs(self.striker_left.centery - self.ball.centery) < self._height//6
             if close_to_ball and striker_close and not self.p2_jolt:
@@ -1107,7 +1161,7 @@ class MugicPongGame(PongGame):
         p1_txt, p2_txt = self.p1_mugic_text, self.p2_mugic_text
         p1_txt.move(5, 2)
         p2_txt.move(5, 2)
-        p1_txt.setFontSize(20)
+        p1_txt.setFontSize(30)
         p2_txt.setFontSize(30)
         p1_txt.setFontType(MONOSPACE)
         p2_txt.setFontType(MONOSPACE)
@@ -1163,15 +1217,17 @@ class MugicPongGame(PongGame):
     def _tick(self):
         if self._pause:
             self._update()
+            if self._current_screen == "credits":
+                self.credit_images.update()
             return
         super()._tick()
 
     def _title_screen(self):
         self.pause()
         self._current_screen = "title"
-        title_text = "MUGICAL PONG"
+        title_text = ""
         subtitle_text = "press P to start, H for instructions, C for credits"
-        self._draw_menu_screen(title_text, subtitle_text, background=Color.random())
+        self._draw_menu_screen(title_text, subtitle_text, background=self._title_background)
 
     def _instruction_screen(self):
         self.pause()
@@ -1210,8 +1266,16 @@ Members:
 
 Project Sponsor:
     Mari Kimura, MugicMotion
+
+Git Repo:
+    github.com/ericxu-25/mugic-pypong
 """
         self._draw_menu_screen(title_text, credits_text, background=Color.randomBetween(0.2, 0.4, 0.6))
+        for image_sprite in self.credit_images: image_sprite.show()
+
+    def _hide_menu_screen(self):
+        super()._hide_menu_screen()
+        for image_sprite in self.credit_images: image_sprite.hide()
 
     def start(self):
         # when starting the game, show the title screen
@@ -1236,8 +1300,8 @@ Project Sponsor:
 
     def _reset(self):
         super()._reset()
-        self.pointer_right.x = self.striker_right.x
-        self.pointer_left.x = self.striker_left.x
+        self.pointer_right.centerx = self.striker_right.centerx
+        self.pointer_left.centerx = self.striker_left.centerx
 
 # MAIN
 def main():
@@ -1261,7 +1325,7 @@ def main():
     if args.legacy:
         PONG = PongGame(WIDTH, HEIGHT)
     else:
-        PONG = MugicPongGame(WIDTH, HEIGHT, args.port1, args.port2)
+        PONG = MugicPongGame(WIDTH, HEIGHT, port1=args.port1, port2=args.port2)
     PONG.start()
     pygame.quit()
 

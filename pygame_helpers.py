@@ -6,6 +6,7 @@ import math
 import random
 import colorsys
 import logging
+import sys, os
 
 # Resources used as reference:
 # * geeksforgeeks.org/create-a-pong-game-in-python-pygame/
@@ -16,7 +17,19 @@ import logging
 pygame.font.init()
 FREESANS = 'freesansbold.ttf'
 MONOSPACE = pygame.font.match_font(["inconsolata", "consolas", "monospace"])
+WIDTH, HEIGHT = 1300, 600
 
+# HELPERS
+
+# ref: https://stackoverflow.com/questions/54210392
+def resource_path(relative_path):
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
+# CLASSES
 class Color:
     black = (0,0,0)
     darkgrey = (25,25,40)
@@ -51,9 +64,6 @@ class Color:
         r, g, b = colorsys.hsv_to_rgb(random_hue, saturation, value)
         return (r * 255, g * 255, b * 255)
 
-WIDTH, HEIGHT = 1300, 600
-
-# HELPERS
 
 # class to work with pygame keyevents
 class Key():
@@ -138,6 +148,9 @@ class Sprite(pygame.sprite.DirtySprite):
         else:
             self._update_position()
         self.mask = pygame.mask.from_surface(self.image)
+
+    def updateImage(self):
+        self._update_image()
 
     def _update_rotation(self):
         self._update_position()
@@ -265,6 +278,12 @@ class Sprite(pygame.sprite.DirtySprite):
     def centerx(self, val): self.x = val - self._width//2
 
     @property
+    def center(self): return (self.centerx, self.centery)
+
+    @center.setter
+    def center(self, val): self.centerx = val[0], self.centery = val[1]
+
+    @property
     def left(self): return self._x
 
     @left.setter
@@ -338,10 +357,6 @@ class Sprite(pygame.sprite.DirtySprite):
     def toggleVisibility(self):
         if self.visible: self.hide()
         else: self.show()
-
-    def debugPrint(self, *args, **kwargs):
-        if self._debug:
-            print("["+self.name+"]", *args, **kwargs)
 
     def debugFunction(self, func, *args, **kwargs):
         if not self._debug:
