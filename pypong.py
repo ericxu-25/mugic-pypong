@@ -390,9 +390,9 @@ class Ball(GameSprite):
     def _unclipFromStriker(self, striker, striker_normal):
         backstep = striker_normal
         limit = self._substeps
+        self.move(striker.impact_velocity, striker.velocity)
         while pygame.sprite.collide_mask(self, striker):
             self.move(backstep.x, backstep.y)
-            self.move(striker.impact_velocity, striker.velocity)
             limit -= 1
             if limit <= 0:
                 break
@@ -956,17 +956,20 @@ class MugicPongGame(PongGame):
             self.p1_lt = False
             self.p1_up = False
             self.p1_dn = False
-            # control position with the forward angle
+            # control position with the pointing angle
             m1_point = m1.pointingAt(m1_data)
+            # fit the pointing values (-1 to 1) to screen position
             targetY = self._height//2 - int(m1_point[2] * self._height//2)
-            targetX = self._width//2 - int(m1_point[0] * self._width//2)
+            targetX = self._width//2 - int(m1_point[1] * self._width//2)
             self.p1_y = targetY
-            self.p1_x = targetX
+            self.p1_x = m1.thrustAccel()
+            if abs(self.p1_x) < 2: self.p1_x = 0
+            else: self.p1_x *= 2
             self.p1_rotx, self.p1_roty, self.p1_rotz = IMU.euler(m1_data) or (0, 0, 0)
             self.p1_moving = m1.moving(datagram=m1_data)
             # control rotation with the tilt
-            self.p1_rt = m1.rolledRight(threshold=20)
-            self.p1_lt = m1.rolledLeft(threshold=20)
+            self.p1_rt = m1._facing(axis=2, direction=120, threshold=20, datagram=m1_data)
+            self.p1_lt = m1._facing(axis=2, direction=-120, threshold=20, datagram=m1_data)
             # detect jolt
             if m1.jolted(20):
                 self.p1_jolt = True
@@ -979,17 +982,19 @@ class MugicPongGame(PongGame):
             self.p2_lt = False
             self.p2_up = False
             self.p2_dn = False
-            # control position with the forward angle
+            # control position with the pointing angle
             m2_point = m2.pointingAt(m2_data)
             targetY = self._height//2 - int(m2_point[2] * self._height//2)
-            targetX = self._width//2 - int(m2_point[0] * self._width//2)
+            targetX = self._width//2 - int(m2_point[1] * self._width//2)
             self.p2_y = targetY
-            self.p2_x = targetX
+            self.p2_x = m2.thrustAccel()
+            if abs(self.p2_x) < 2: self.p2_x = 0
+            else: self.p2_x *= 2
             self.p2_rotx, self.p2_roty, self.p2_rotz = IMU.euler(m2_data) or (0, 0, 0)
             self.p2_moving = m2.moving(datagram=m2_data)
             # control rotation with the tilt
-            self.p2_rt = m2.rolledRight(threshold=20)
-            self.p2_lt = m2.rolledLeft(threshold=20)
+            self.p2_rt = m2._facing(axis=2, direction=120, threshold=20, datagram=m2_data)
+            self.p2_lt = m2._facing(axis=2, direction=-120, threshold=20, datagram=m2_data)
             # detect jolt
             if m2.jolted(20):
                 self.p2_jolt = True
@@ -998,43 +1003,39 @@ class MugicPongGame(PongGame):
         # Mugic player 1 controls
         if self.mugic_player_1.connected() and not self.p1_CPU:
             self.pointer_right.show()
-            if not self.p1_jolt:
-                for _ in range(3):
-                    self.striker_right._moveTowardsPoint(self.p1_y)
-                self.pointer_right.centery = self.p1_y
-                self.pointer_right.rotateTo(self.striker_right.rotation)
-                if not (self.p1_rt or self.p1_lt):
-                    self.striker_right._rotateTowardsAngle(-self.p1_rotz)
-                else:
-                    if self.p1_rt:
-                        self.striker_right._rotateRight()
-                    if self.p1_lt:
-                        self.striker_right._rotateLeft()
+            self.striker_right.impact_velocity += self.p1_x/4
+            for _ in range(2):
+                self.striker_right._moveTowardsPoint(self.p1_y)
+            self.striker_right._moveTowardsPoint(self.p1_y)
+            self.pointer_right.centery = self.p1_y
+            self.pointer_right.rotateTo(self.striker_right.rotation)
+            if not (self.p1_rt or self.p1_lt):
+                self.striker_right._rotateTowardsAngle(-self.p1_rotz)
             else:
-                self.p1_jolt = not (self.striker_right._moveTowardsBall() and
-                                    self.striker_right._rotateTowardsNormal())
+                if self.p1_rt:
+                    self.striker_right._rotateRight()
+                if self.p1_lt:
+                    self.striker_right._rotateLeft()
+            self.p1_jolt = not (self.striker_right._moveTowardsBall())
         else:
             self.pointer_right.hide()
             self._handle_p1_controls()
         # Mugic player 2
         if self.mugic_player_2.connected() and not self.p2_CPU:
-            self.pointer_left.x = self.striker_left.x
             self.pointer_left.show()
-            if not self.p2_jolt:
-                for _ in range(3):
-                    self.striker_left._moveTowardsPoint(self.p2_y)
-                self.pointer_left.centery = self.p2_y
-                self.pointer_left.rotateTo(self.striker_left.rotation)
-                if not (self.p2_rt or self.p2_lt):
-                    self.striker_left._rotateTowardsAngle(-self.p2_rotz)
-                else:
-                    if self.p2_rt:
-                        self.striker_left._rotateRight()
-                    if self.p2_lt:
-                        self.striker_left._rotateLeft()
+            self.striker_left.impact_velocity += self.p2_x/4
+            for _ in range(2):
+                self.striker_left._moveTowardsPoint(self.p2_y)
+            self.pointer_left.centery = self.p2_y
+            self.pointer_left.rotateTo(self.striker_left.rotation)
+            if not (self.p2_rt or self.p2_lt):
+                self.striker_left._rotateTowardsAngle(-self.p2_rotz)
             else:
-                self.p2_jolt = not (self.striker_left._moveTowardsBall() and
-                                    self.striker_left._rotateTowardsNormal())
+                if self.p2_rt:
+                    self.striker_left._rotateRight()
+                if self.p2_lt:
+                    self.striker_left._rotateLeft()
+            self.p2_jolt = not (self.striker_left._moveTowardsBall())
         else:
             self.pointer_left.hide()
             self._handle_p2_controls()
@@ -1044,9 +1045,6 @@ class MugicPongGame(PongGame):
         super()._handle_events()
         if self._frame_count % 3 == 0:
             self._handle_mugic_controls()
-
-    def _reset(self):
-        super()._reset()
 
     def _init_mugic_image(self):
         self.p1_mugic_display = MugicDisplay(self.mugic_player_1)
@@ -1203,6 +1201,7 @@ Project Sponsor:
     def _reset(self):
         super()._reset()
         self.pointer_right.x = self.striker_right.x
+        self.pointer_left.x = self.striker_left.x
 
 # MAIN
 def main():
@@ -1213,8 +1212,8 @@ def main():
     Window().rescale(WIDTH, HEIGHT)
     Window().resize(0.8)
     pygame.init()
-    PONG = PongGame(WIDTH, HEIGHT)
-    #PONG = MugicPongGame(WIDTH, HEIGHT)
+    #PONG = PongGame(WIDTH, HEIGHT)
+    PONG = MugicPongGame(WIDTH, HEIGHT)
     PONG.start()
     pygame.quit()
 

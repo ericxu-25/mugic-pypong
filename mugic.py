@@ -461,7 +461,7 @@ class IMUController(IMU):
             if abs(accel[i]) < self._accel_low_pass[i]:
                 continue
             # skip if not a major component of the motion
-            if abs(accel[i]) < accel_magnitude // 9:
+            if abs(accel[i]) < accel_magnitude / 27:
                 continue
             # reset rising/falling if expired or start of a new edge
             if (time.time()-self._last_frame_update > self._max_frame_size or
@@ -571,11 +571,11 @@ class IMUController(IMU):
         self.resetFrame()
 
     # easy controller methods - query controller speed, gyro, facing
-    def _moving(self, axis, direction=1, threshold=0.1, datagram=None):
+    def _moving(self, axis, direction=1, threshold=0.01, datagram=None):
         """returns if the IMU was moving along an axis
 
         This method does not reset the last movement frame - that must be done manually once the
-        movement has been processed.
+        movement has been processed. Note that each axis is updated independently
 
         Args:
             axis (int): axis of movement to query
