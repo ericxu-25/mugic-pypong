@@ -255,7 +255,7 @@ class Striker(GameSprite):
         # using smoothscale_by instead (slower, but cleaner than scale_by)
         tab.screen.blit(
                 pygame.transform.smoothscale_by(self.image, fit_scale),
-                center_position)
+                center_position, special_flags=self.blendmode)
         if ball == None: return # stop if no data
         # draw the ball onto the tab
         scale = self.game._scale
@@ -265,7 +265,7 @@ class Striker(GameSprite):
                  ball.rect.height//2 * fit_scale)
         tab.screen.blit(
                 pygame.transform.smoothscale_by(ball.image, fit_scale),
-                ball_position)
+                ball_position, special_flags=ball.blendmode)
         # write the data onto the tab
         text[1].setText(bounce_data['speed'])
         text[2].setText(bounce_data['spin'])

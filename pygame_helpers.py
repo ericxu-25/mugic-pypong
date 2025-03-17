@@ -132,7 +132,7 @@ class Sprite(pygame.sprite.DirtySprite):
         # sprite properties
         self.dirty = 1
         self.visible = 1
-        self.blendmode = 0
+        self.blendmode = pygame.BLEND_ALPHA_SDL2
         self.source_rect = None
         self.layer = 0
         self._width = random.randint(50, 200)
