@@ -217,7 +217,7 @@ class Striker(GameSprite):
                     "...", tab=tab)
                 text.append(new_text)
                 new_text.setFontSize(text_size)
-                new_text.moveTo(5, 5 + (text_size + 3) * i)
+                new_text.moveTo(10, 10 + (text_size + 3) * i)
             text[0].setText("BOUNCE INFORMATION")
             text[1].setFormatString("ball speed: {:.2f}")
             text[1].setText(0)
@@ -243,8 +243,8 @@ class Striker(GameSprite):
 
     def _draw_striker_bounce(self, display, ball, **bounce_data):
         # select the middle display tab
-        display.refresh()
         tab = display.getTab(1)
+        tab.refresh()
         text = self._draw_striker_bounce_text
         # resize striker image to fit
         fit_scale = tab._height / self._height / 2
@@ -952,6 +952,8 @@ class MugicPongGame(PongGame):
                 tab_position = [-p/self.scale for p in tab_position]
                 tab.base_background.blit(self._game_background, tab_position)
                 tab._refresh_background()
+                tab.refresh()
+
     def _stop(self):
         super()._stop()
         self.mugic_player_1.close()
@@ -959,6 +961,11 @@ class MugicPongGame(PongGame):
 
     def _initialize_sprites(self):
         super()._initialize_sprites()
+        # update ball to use ball image
+        ball = load_image(resource_path('assets/ball.png'), convert_alpha=True)
+        if ball is not None:
+            self.ball.setImage(ball)
+            self.ball.resize(self.ball.r*2)
         # create pointer sprites
         self.pointer_right = GameSprite(self)
         self.pointer_right.setImage(self.striker_right.base_image.copy())
@@ -1080,7 +1087,7 @@ class MugicPongGame(PongGame):
         _striker = self.striker_right.base_image.copy()
         credit_striker_1 = self._ControllableBounceSprite(self, self.credit_images)
         credit_striker_1.setImage(_striker)
-        credit_striker_1._p1 = True
+        credit_striker_1._p2 = True
         credit_striker_1.layer = 4
         credit_striker_1.hide()
         self.credit_images.add(credit_striker_1)
@@ -1091,7 +1098,7 @@ class MugicPongGame(PongGame):
         credit_striker_2.layer = 4
         credit_striker_2.hide()
         credit_striker_2.setImage(_striker)
-        credit_striker_2._p2 = True
+        credit_striker_2._p1 = True
         self.credit_images.add(credit_striker_2)
         credit_striker_2.moveCenterTo(self.width - self.width//10, self.height//2)
         self.addSprite(credit_striker_2)
