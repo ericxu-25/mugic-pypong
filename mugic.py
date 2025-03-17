@@ -51,7 +51,7 @@ Classes
 ABOUT THE DEVELOPERS
     Team Mugical - UCI Informatics Senior Capstone Group, 2024-2025
     * Members: Eric Xu, Melody Chan-Yoeun, Bryan Matta Villatoro,
-               Shreya Padisetty, Aj Singh
+               Kaitlyn Ngoc Chau Tran, Shreya Padisetty, Aj Singh,
     * Project Sponsor: Mari Kimura, MugicMotion
 
 CREDITS

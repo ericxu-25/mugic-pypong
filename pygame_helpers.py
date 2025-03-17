@@ -29,6 +29,35 @@ def resource_path(relative_path):
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
+def load_image(resource_path, convert_alpha=False, size=None):
+    """loads an image from a resource path into a pygame surface
+
+    Args:
+        resource_path (str): resource path to load the image from
+        convert_alpha (bool): if True, preserves alpha values in image
+        size ((num, num) or num or None): size to scale the image to.
+            If provided a single number, scales to match that number
+            as height. If None, doesn't scale.
+
+    Returns:
+        a pygame surface of the image if succussfule, otherwise None
+    """
+    try:
+        image = pygame.image.load(resource_path)
+        if size is not None:
+            if type(size) in (float, int):
+                image = pygame.transform.smoothscale_by(image, size/image.get_height())
+            else:
+                image = pygame.transform.smoothscale(image, size)
+        if not convert_alpha: return image.convert()
+        else: return image.convert_alpha()
+    except FileNotFoundError:
+        logging.warning(f"FileNotFoundError while loading image: {resource_path}")
+        return None
+    except Exception as e:
+        logging.error(f"Exception while loading image: {resource_path}\n{e}")
+        return None
+
 # CLASSES
 class Color:
     black = (0,0,0)
@@ -63,6 +92,10 @@ class Color:
         random_hue = cls._random_hue * (max_hue - min_hue) + min_hue
         r, g, b = colorsys.hsv_to_rgb(random_hue, saturation, value)
         return (r * 255, g * 255, b * 255)
+
+    @staticmethod
+    def addAlpha(color, alpha=128):
+        return (*color, alpha)
 
 
 # class to work with pygame keyevents
@@ -246,6 +279,14 @@ class Sprite(pygame.sprite.DirtySprite):
 
     @property
     def abs_width(self): return self._width * self.scale
+
+    @property
+    def size(self):
+        return self.width, self.height
+
+    @property
+    def abs_size(self):
+        return self.abs_width, self.abs_height
 
     @property
     def bottom(self): return self._y + self._height
@@ -476,7 +517,7 @@ class TextSprite(Sprite):
         return self
 
     @property
-    def antialias(self, size):
+    def antialias(self):
         return self._antialias
 
     @antialias.setter
@@ -484,7 +525,7 @@ class TextSprite(Sprite):
         self.setAntialias(bool(on))
 
     @property
-    def fontsize(self, size):
+    def fontsize(self):
         return self._fontsize
 
     @fontsize.setter
@@ -492,7 +533,7 @@ class TextSprite(Sprite):
         self.setFontSize(size)
 
     @property
-    def fonttype(self, font):
+    def fonttype(self):
         return self._fonttype
 
     @fonttype.setter
@@ -673,7 +714,7 @@ class Window:
         self._scale = (float(WIDTH) /self._width)
         self.background = pygame.transform.scale(
                 self.base_background,
-                (WIDTH, HEIGHT))
+                (WIDTH, HEIGHT)).convert_alpha()
         self.window.fill(Color.black)
         self.window.blit(self.background, (0, 0))
         for screen in self.screens:
@@ -842,6 +883,14 @@ class Screen:
     @property
     def abs_height(self):
         return self._scale*(self.height)
+
+    @property
+    def size(self):
+        return self.width, self.height
+
+    @property
+    def abs_size(self):
+        return self.abs_width, self.abs_height
 
     @property
     def left(self):

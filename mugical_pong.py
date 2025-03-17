@@ -14,6 +14,8 @@ from mugic import *
 # - shake the Mugic launch striker forward
 # - thrust Mugic forward (in pointing direction)
 
+# TODO - fps independence
+
 
 # PONG implementation
 class Striker(GameSprite):
@@ -158,12 +160,23 @@ class Striker(GameSprite):
     def _moveTowardsBall(self):
         return self._moveTowardsPoint(self.game.ball.centery)
 
+    def _launchTowardsBall(self):
+        ball = self.game.ball
+        db = abs(self._x - ball._x)
+        if db > self.height - self._CPU_RANDOM//2:
+            return
+        if self._x - ball._x < 0:
+            self._moveRight()
+        else:
+            self._moveLeft()
+
+
     def _CPUMovement(self):
         ball = self.game.ball
         db = abs(self._x - ball._x)
         if db > self.game._width//2:
             self._rotateTowardsNormal()
-            if db > self.game._width * 0.7:
+            if db > self.game._width //2:
                 self._CPU_RANDOM = random.randint(1, 30)
             elif self._CPU_RANDOM % 4 == 0:
                 self._moveTowardsNormal()
@@ -171,6 +184,8 @@ class Striker(GameSprite):
         self._moveTowardsPoint(ball.centery + (self._CPU_RANDOM - 15) // 3)
         if self._CPU_RANDOM % 4 != 0:
             self._rotateTowardsBall()
+        if self._CPU_RANDOM % 3 == 0:
+            self._launchTowardsBall()
 
     def _snapToEdge(self):
         if self.top < self.game.top:
@@ -222,7 +237,7 @@ class Striker(GameSprite):
         self.velocity = 0
         self.impact_velocity = 0
         if self._spring_x is not None:
-            self.x = self._spring_x
+            self.centerx = self._spring_x
         self._CPU_RANDOM = random.randint(1, 30)
         self.debugDraw(self._draw_striker_bounce, None)
 
@@ -246,8 +261,8 @@ class Striker(GameSprite):
         scale = self.game._scale
         ball_offset = bounce_data['offset'] * scale * fit_scale
         ball_position = ball_offset + center - \
-                (ball.rect.width//2 * fit_scale * self.scale,
-                 ball.rect.height//2 * fit_scale * self.scale)
+                (ball.rect.width//2 * fit_scale,
+                 ball.rect.height//2 * fit_scale)
         tab.screen.blit(
                 pygame.transform.smoothscale_by(ball.image, fit_scale),
                 ball_position)
@@ -306,6 +321,10 @@ class Striker(GameSprite):
             self._snapToEdge()
             self.velocity = 0
             self.impact_velocity = 0
+        # put a limit on the maximum spring distance
+        if self._spring_x and abs(self._spring_x - self.centerx) > self.game.width//2:
+            self.impact_velocity = 0
+            self._centerx = self._spring_x + self.game.width//2 * sign(self.game.width//2 - self._spring_x)
 
 class Ball(GameSprite):
     def __init__(self, game=None):
@@ -314,14 +333,14 @@ class Ball(GameSprite):
         self.velocity = pygame.math.Vector2(1, 0)
 
     def setup(self, speed, color, r, mass):
-        self.speed_value = speed
+        self.speed_value = speed / 2
         self.speed_increase = 0
-        self.min_speed = 10 * (speed/10.0)
+        self.min_speed = max(10 * (speed/20.0 + 1), 1)
         self.speed = self.min_speed
         self.mass = (mass / 10.0)
         self.rolling_friction = (
                 0.1 *
-                (speed/10.0) *
+                (speed/20.0) *
                 (1 - 1.0 / (self.mass + 1)))
         self._substeps = 30
         self.color = color
@@ -334,7 +353,7 @@ class Ball(GameSprite):
 
     def _increase_speed(self, amount=1):
         self.speed_increase += amount
-        self.min_speed = 10 * ((self.speed_value + self.speed_increase)/10.0)
+        self.min_speed = max(10 * ((self.speed_value + self.speed_increase)/10.0), 1)
         self.rolling_friction = (
                 0.1 *
                 (self.min_speed/10.0) *
@@ -363,16 +382,15 @@ class Ball(GameSprite):
         if next_y <= 0:
             self._y = 0
             self._bounce(pygame.math.Vector2(0, -1))
-        elif next_y + 2 * self.r >= floor:
-            self._y = floor - 2 * self.r
+        elif next_y + self.height >= floor:
+            self._y = floor - self.height
             self._bounce(pygame.math.Vector2(0, 1))
         if next_x <= 0:
             self._x = 0
             self._bounce(pygame.math.Vector2(1, 0))
-        elif next_x + 2 * self.r >= right:
-            self._x = right - 2 * self.r
+        elif next_x + self.width >= right:
+            self._x = right - self.width
             self._bounce(pygame.math.Vector2(-1, 0))
-
 
     def scoreOnPlayers(self):
         goals = self.game.goals # dict(striker, goal_rect)
@@ -455,8 +473,8 @@ class Ball(GameSprite):
         if striker_rot_hit_vector.length() == 0:
             return final_vector
         striker_rot_hit_vector.scale_to_length(rot_hit_speed)
-        if striker.rot_velocity > 0: striker.rot_velocity -= rot_hit_speed
-        else: striker.rot_velocity += rot_hit_speed
+        # decrease striker rotational speed by hit speed
+        striker.rot_velocity -= sign(striker.rot_velocity) * rot_hit_speed * self.mass
         final_vector += striker_rot_hit_vector
         return final_vector
 
@@ -477,9 +495,9 @@ class Ball(GameSprite):
         # apply modifications based on the striker's attributes
         # modification 1: striker power
         striker_hit_vector = striker_normal.copy()
-        striker_hit_vector.scale_to_length(striker.power/self.mass)
+        striker_hit_vector.scale_to_length(striker.power)
         final_vector += striker_hit_vector
-        # modification 2: striker relative movement (spin)
+        # modification 2: striker vertical movement (spin)
         spin_mod = striker.velocity * striker.grip / self.mass * direction / 2.0
         self.spin += (abs(striker_normal.x)) * spin_mod
         # modification 3: striker rotation
@@ -492,7 +510,7 @@ class Ball(GameSprite):
         towards_center = (self.game._width//2 - self._cx) * final_vector.x >= 0
         if towards_striker or not towards_center:
             new_offset = offset_vector.copy()
-            new_offset.scale_to_length(striker.power / self.mass)
+            new_offset.scale_to_length(striker.power)
             final_vector = (rotate_hit_vector +
                             striker_hit_vector +
                             new_offset)
@@ -500,7 +518,7 @@ class Ball(GameSprite):
         striker_impact = striker.impact_velocity
         if sign(striker_impact) == sign(final_vector.x):
             striker_impact = abs(striker_impact) * striker_normal * striker.elasticity
-            final_vector += striker_impact / 2
+            final_vector += striker_impact / self.mass * striker.springiness * 2
         else: striker_impact = pygame.math.Vector2(0,0)
         # modification 6: critical hit!
         # increase power by 10% if the ball hit the striker corner
@@ -509,9 +527,16 @@ class Ball(GameSprite):
         if towards_striker:
             final_vector *= 1.1
             critical = final_vector
+        # apply the equal and opposite force to the striker
+        striker.impact_velocity -= final_vector.x
+        striker.velocity -= final_vector.y
+        # put the bounce onto the display
         # apply final calculated vector
-        if final_vector.magnitude() == 0:
+        final_vector /= self.mass
+        if isclose(final_vector.magnitude(), 0):
             self.velocity = striker_hit_vector + reflect_vector
+            if isclose(self.velocity.magnitude(), 0):
+                self.velocity = striker_hit_vector
         else:
             self.velocity = final_vector
         self.speed = self.velocity.magnitude()
@@ -519,10 +544,6 @@ class Ball(GameSprite):
         self.spin = math.log(abs(self.spin)+1) * 3 * sign(self.spin)
         # apply an extra layer of friction onto the striker
         striker._apply_friction()
-        # apply the equal and opposite force to the striker
-        striker.impact_velocity -= final_vector.x
-        striker.velocity -= final_vector.y
-        # put the bounce onto the display
         bounce_data = {"normal": striker_normal,
                        "impact": striker_impact,
                        "offset": offset_vector,
@@ -549,6 +570,8 @@ class Ball(GameSprite):
         self.speed -= self.rolling_friction/self._substeps
         if self.speed < self.min_speed:
             self.speed = self.min_speed
+        if isclose(self.velocity.length(), 0):
+            self.velocity = pygame.math.Vector2(1, 0)
         self.velocity.scale_to_length(self.speed)
         self.move(float(self.velocity.x/self._substeps),
                   float(self.velocity.y/self._substeps))
@@ -574,22 +597,23 @@ class PongGame(Game):
     striker_grip = 10
     striker_elasticity = 10
     striker_springiness = 10
-    ball_speed = 5
+    ball_speed = 10
     ball_color = Color.white
     ball_size = 10
     ball_mass = 15
 
     def __init__(self, w, h = None, padding=(2, 2, 2, 2)):
-        adjusted_width = w * 2 // 3
-        side_width = (w - adjusted_width) / 2.0
+        side_width = w//16 * 3
+        adjusted_width = w - side_width*2
         super().__init__(adjusted_width, h, padding=padding)
         self.base_background.fill(Color.black)
         self.name = "pong"
-        self.fps = 60
+        self.fps = 60 # note that a different fps radically changes the game
         # increase ball speed by 1 every 5 seconds
         self.SPEED_INCREASE_TIME = 3
         self._initialize_screens(side_width)
         self._initialize_sprites()
+        self._initialize_menu_sprites()
         self._initialize_controls()
         self._window.addGame(self, (side_width, 0))
         self._window.name = "Mugical Pong"
@@ -599,12 +623,14 @@ class PongGame(Game):
         self.debug_screen_left.splitTabs(3)
         # left side chooses blueish colors
         for tab in self.debug_screen_left.tabs:
-            tab.base_background.fill(Color.randomBetween(0.7, 0.8, 1, 0.8))
+            color = Color.randomBetween(0.7, 0.8, 1, 0.8)
+            tab.base_background.fill(color)
         self.debug_screen_right = DisplayScreen(w, self.height)
         self.debug_screen_right.splitTabs(3)
         # right side chooses purplish colors
         for tab in self.debug_screen_right.tabs:
-            tab.base_background.fill(Color.randomBetween(0.8, 0.9, 1, 0.8))
+            color = Color.randomBetween(0.8, 0.9, 1, 0.8)
+            tab.base_background.fill(color)
         self._window.addScreen(self.debug_screen_left, (0, 0))
         self._window.addScreen(self.debug_screen_right, (w + self.abs_width, 0))
 
@@ -674,12 +700,13 @@ class PongGame(Game):
         self.s2_score = 0
         self._update_score()
 
+    def _initialize_menu_sprites(self):
         # setup menu sprites
         self.menu_title_text = TextSprite(self)
         self.menu_title_text.layer = 5
         self._add_sprite(self.menu_title_text)
         self.menu_title_text.hide()
-        self.menu_title_text.setFontSize(120)
+        self.menu_title_text.setFontSize(100)
         self.menu_title_text.setFormatString("{}")
         self.menu_title_text.bold = True
         self.menu_subtitle_text = TextSprite(self)
@@ -688,7 +715,8 @@ class PongGame(Game):
         self.menu_subtitle_text.hide()
         self.menu_subtitle_text.setFontSize(40)
         self.menu_subtitle_text.setFormatString("{}")
-        self.menu_subtitle_text.italic = True
+        self.menu_subtitle_text.setColor(Color.white)
+        #self.menu_subtitle_text.italic = True
         self.menu_background_sprite = Sprite(self)
         self.menu_background_sprite.layer = 3
         self._add_sprite(self.menu_background_sprite)
@@ -699,12 +727,12 @@ class PongGame(Game):
         self.menu_background_sprite.hide()
 
     def _update_menu_text_position(self):
-        middle = self._height // 4
+        middle = self._height // 4 + 20
         center = self._width // 2
         self.menu_title_text.moveCenterTo(center, middle)
         self.menu_subtitle_text.moveCenterTo(center, middle)
         self.menu_subtitle_text.y = (self.menu_title_text.y
-                                     + self.menu_title_text.height + 10)
+                                     + self.menu_title_text.height)
 
     def _draw_menu_screen(self, title_text, subtitle_text, background=None):
         self.menu_title_text.setText(title_text)
@@ -839,9 +867,11 @@ class PongGame(Game):
             self.striker_right._moveUp()
         if self.p1_dn:
             self.striker_right._moveDown()
-        if self.p1_rt:
+        if self.p1_rt and self.p1_lt:
+            self.striker_right._rotateTowardsNormal()
+        elif self.p1_rt:
             self.striker_right._rotateRight()
-        if self.p1_lt:
+        elif self.p1_lt:
             self.striker_right._rotateLeft()
         if self.p1_lm:
             self.striker_right._moveLeft()
@@ -856,9 +886,11 @@ class PongGame(Game):
             self.striker_left._moveUp()
         if self.p2_dn:
             self.striker_left._moveDown()
-        if self.p2_rt:
+        if self.p2_rt and self.p2_lt:
+            self.striker_left._rotateTowardsNormal()
+        elif self.p2_rt:
             self.striker_left._rotateRight()
-        if self.p2_lt:
+        elif self.p2_lt:
             self.striker_left._rotateLeft()
         if self.p2_lm:
             self.striker_left._moveLeft()
@@ -894,13 +926,13 @@ class PongGame(Game):
 # PONG GAME but with Mugic Controls
 class MugicPongGame(PongGame):
     # configuration values
-    ball_speed = 4
-    striker_power = 9
+    ball_speed = 8
+    striker_power = 15
     striker_speed = 30
     ball_mass = 20
     striker_grip = 10
-    striker_size = (40, 150)
-    ball_size = 12
+    striker_size = (50, 160)
+    ball_size = 15
 
     def __init__(self, w, h, padding=(2, 2, 2, 2), port1=4000, port2=4001):
         super().__init__(w, h, padding)
@@ -910,7 +942,16 @@ class MugicPongGame(PongGame):
         self._init_mugic_text()
         self._current_screen = None
         self._frame_count = 0
-
+        # apply game background to game screen
+        if self._game_background is not None:
+            centered = ((self.width - self._game_background.get_width())//2, 0)
+            self.base_background.blit(self._game_background, centered)
+            self._refresh_background()
+            for tab in [*self.debug_screen_left.tabs, *self.debug_screen_right.tabs]:
+                tab_position = tab._screen.get_abs_offset()
+                tab_position = [-p/self.scale for p in tab_position]
+                tab.base_background.blit(self._game_background, tab_position)
+                tab._refresh_background()
     def _stop(self):
         super()._stop()
         self.mugic_player_1.close()
@@ -918,6 +959,7 @@ class MugicPongGame(PongGame):
 
     def _initialize_sprites(self):
         super()._initialize_sprites()
+        # create pointer sprites
         self.pointer_right = GameSprite(self)
         self.pointer_right.setImage(self.striker_right.base_image.copy())
         self.pointer_right.base_image.fill(Color.darkgrey)
@@ -929,43 +971,130 @@ class MugicPongGame(PongGame):
         self.pointer_left.layer = -1
         self.pointer_left.hide()
         self._add_sprite(self.pointer_right, self.pointer_left)
+        # initialize title screen and gamescreen background
+        mugical_background = resource_path('assets/mugical_title_bg.jpg')
+        self._title_background = load_image(mugical_background, self.size)
+        game_background = resource_path('assets/mugical_game_bg.jpg')
+        self._game_background= load_image(game_background, self.size)
+        self._initialize_credit_screen_sprites()
+
+    # internal class - a bouncing sprite
+    class _BounceSprite(GameSprite):
+        def __init__(self, screen, collision_group=None):
+            super().__init__(screen)
+            self.velocity = pygame.math.Vector2(1, 0)
+            self.speed = (5 * random.random() + 1)
+            self.velocity.rotate_ip(random.random() * 360)
+            self.collision_group = collision_group
+
+        def _bounce(self, wall_normal):
+            self.velocity.reflect_ip(wall_normal)
+
+        def bounceOffOthers(self):
+            if self.collision_group is None: return False
+            ret_val = False
+            for sprite in self.collision_group:
+                if not pygame.sprite.collide_rect(self, sprite): continue
+                ret_val = True
+                offset_vector = pygame.math.Vector2(sprite._cx-self._cx,
+                                                    sprite._cy-self._cy)
+                if offset_vector.magnitude() < 1: continue
+                self.velocity = offset_vector * -1
+                self.velocity.rotate_ip(60 * (random.random() - 0.5))
+                self.move(*(offset_vector.normalize() * -1))
+                sprite.speed = (self.speed + sprite.speed) / 2.1
+                if random.random() > 0.9: self.speed = (8 * random.random()) + 2
+                elif sprite.speed < 0.5: self.speed = (3 * random.random()) + 1
+                else: self.speed = sprite.speed
+            self.velocity.normalize_ip()
+            return ret_val
+
+        def update(self):
+            Ball.bounceOnWalls(self)
+            self.bounceOffOthers()
+            self.move(*(self.velocity * self.speed))
+
+    class _ControllableBounceSprite(_BounceSprite):
+        def __init__(self, *args):
+            super().__init__(*args)
+            self._p1 = False
+            self._p2 = False
+
+        def update(self):
+            self.speed = 10
+            if self._p1:
+                pointing = abs(self.game.p1_y)/self.game.height
+                if self.game.p1_up or pointing < 0.3 and pointing > 0.01: self.move(0, -15)
+                if self.game.p1_dn or pointing > 0.7: self.move(0, 15)
+            elif self._p2:
+                pointing = abs(self.game.p2_y)/self.game.height
+                if self.game.p2_up or pointing < 0.3 and pointing > 0.01: self.move(0, -15)
+                if self.game.p2_dn or pointing > 0.7: self.move(0, 15)
+            if self.bottom > self.game.bottom:
+                self.bottom = self.game.bottom
+            if self.top < self.game.top:
+                self.top = self.game.top
+
+    def _initialize_credit_screen_sprites(self):
         # load image assets
         group_photo = resource_path('assets/team_mugical.jpg')
         mari_kimura= resource_path('assets/mari_kimura.jpg')
         mugic_photo= resource_path('assets/mugic.jpg')
         team_logo = resource_path('assets/mugical_logo.png')
-        mugical_background = resource_path('assets/mugical_bg.jpg')
-        _group_photo = pygame.image.load(group_photo).convert()
-        _mari_photo= pygame.image.load(mari_kimura).convert()
-        _mugic_photo= pygame.image.load(mugic_photo).convert()
-        _team_logo= pygame.image.load(team_logo).convert_alpha()
-        self._title_background = pygame.image.load(mugical_background).convert()
-        # internal class
-        class _BounceSprite(GameSprite):
-            def __init__(self, screen):
-                super().__init__(screen)
-                self.velocity = pygame.math.Vector2(random.random()+0.5, random.random()+0.5)
-                self.velocity *= (3 * random.random())
-                self.r = 100
-
-            def _bounce(self, wall_normal):
-                self.velocity.reflect_ip(wall_normal)
-
-            def update(self):
-                Ball.bounceOnWalls(self)
-                self.move(*self.velocity)
-
+        ball = resource_path('assets/ball.png')
+        bryan_cat = resource_path('assets/bryan_cat.jpg')
+        bg = resource_path('assets/mugical_title_bg.jpg')
+        loaded_credit_images = list()
+        for image_path in [group_photo, mari_kimura, mugic_photo, team_logo, ball, bryan_cat, bg]:
+            try:
+                image = pygame.image.load(image_path)
+                if image_path not in (ball, ):
+                    height = random.random() * 50 + 150
+                else: height = None
+                loaded_credit_images.append((image.convert_alpha(), height))
+            except FileNotFoundError:
+                logging.warning(f"Could not load {image_path} for credit page!")
+        loaded_credit_images.append((self.ball.base_image.copy(), None))
+        team_member_headshots = [resource_path(f"assets/{name}.jpg") for name in (
+            "eric", "aj", "shreya", "kaitlyn", "melody", "bryan")]
+        for image_path in team_member_headshots:
+            image = load_image(image_path)
+            if image is None: continue
+            height = random.random() * 50 + 75
+            loaded_credit_images.append((image, height))
         # create image sprites
         self.credit_images = pygame.sprite.Group()
-        for image in [_group_photo, _mari_photo, _mugic_photo, _team_logo]:
-            image_sprite = _BounceSprite(self)
+        for image, height in loaded_credit_images:
+            image_sprite = self._BounceSprite(self, self.credit_images)
             image_sprite.moveCenterTo(*self.center)
             image_sprite.layer = 4
             self.addSprite(image_sprite)
             image_sprite.hide()
-            image = pygame.transform.smoothscale_by(image, (random.random()*50+250)/image.get_width())
+            if height is not None:
+                fit_scale = height/image.get_height()
+                image = pygame.transform.smoothscale_by(image, fit_scale)
             image_sprite.setImage(image)
             self.credit_images.add(image_sprite)
+
+        # create credit screen strikers
+        _striker = self.striker_right.base_image.copy()
+        credit_striker_1 = self._ControllableBounceSprite(self, self.credit_images)
+        credit_striker_1.setImage(_striker)
+        credit_striker_1._p1 = True
+        credit_striker_1.layer = 4
+        credit_striker_1.hide()
+        self.credit_images.add(credit_striker_1)
+        credit_striker_1.moveCenterTo(self.width//10, self.height//2)
+        self.addSprite(credit_striker_1)
+
+        credit_striker_2 = self._ControllableBounceSprite(self, self.credit_images)
+        credit_striker_2.layer = 4
+        credit_striker_2.hide()
+        credit_striker_2.setImage(_striker)
+        credit_striker_2._p2 = True
+        self.credit_images.add(credit_striker_2)
+        credit_striker_2.moveCenterTo(self.width - self.width//10, self.height//2)
+        self.addSprite(credit_striker_2)
 
     def _initialize_controls(self):
         super()._initialize_controls()
@@ -1013,7 +1142,7 @@ class MugicPongGame(PongGame):
             m1_point = m1.pointingAt(m1_data)
             # fit the pointing values (-1 to 1) to screen position
             targetY = self._height//2 - int(m1_point[2] * self._height//2 * 1.2)
-            targetX = self._width//2 - int(m1_point[1] * self._width//2)
+            targetX = self._width//2 + int(m1_point[1] * self._width//2)
             self.p1_y = targetY
             self.p1_x = targetX
             self.p1_thrust = m1.thrustAccel()
@@ -1039,7 +1168,7 @@ class MugicPongGame(PongGame):
             # control position with the pointing angle
             m2_point = m2.pointingAt(m2_data)
             targetY = self._height//2 - int(m2_point[2] * self._height//2 * 1.2)
-            targetX = self._width//2 - int(m2_point[1] * self._width//2)
+            targetX = self._width//2 + int(m2_point[1] * self._width//2)
             self.p2_y = targetY
             self.p2_x = targetX
             self.p2_thrust = m2.thrustAccel()
@@ -1059,28 +1188,30 @@ class MugicPongGame(PongGame):
             self.pointer_right.show()
             self.pointer_right.centery = self.p1_y
             self.pointer_right.rotateTo(self.striker_right.rotation)
-            # on thrust - swing forward
-            if abs(self.p1_thrust) > abs(self.p1_swing):
-                self.p1_thrust = max(0, self.p1_thrust - 3) * 4
-                self.striker_right.impact_velocity -= min(self.p1_thrust, 8)
-                # if thrust is powerful enough, add light homing
-                if self.p1_thrust > 8:
-                    for _ in range(3):
-                        self.striker_right._moveTowardsBall()
-            # otherwise if jolted, launch forward (lock y position)
-            elif self.p1_jolt:
-                self.striker_right.impact_velocity -= 10
-                # scale based on distance from ball - launches further if the ball is further
-                self.striker_right.impact_velocity -= abs(25 * (self.pointer_right.x - self.ball.x)/self._width)
             # aim assist - if close enough to ball move towards it
-            close_to_ball = self.pointer_right.distanceTo(self.ball) < self._height // 6
+            close_to_ball = self.pointer_right.distanceTo(self.ball) < self._height // 5
+            pointer_close = abs(self.pointer_right.centery - self.ball.centery) < self._height//6
             striker_close = abs(self.striker_right.centery - self.ball.centery) < self._height//6
             if close_to_ball and striker_close and not self.p1_jolt:
                 self.striker_right._moveTowardsBall()
-            elif not self.p1_jolt:
-                # move double speed towards pointing position
-                self.striker_right._moveTowardsPoint(self.p1_y)
-                self.striker_right._moveTowardsPoint(self.p1_y)
+            else: # normally, just move towards pointing position
+                for _ in range(3):
+                    self.striker_right._moveTowardsPoint(self.p1_y)
+            # on thrust - swing forward
+            thrusting = abs(self.p1_thrust) > abs(self.p1_swing)
+            if thrusting:
+                self.p1_thrust = max(0, self.p1_thrust - 3) * 4
+                self.striker_right.impact_velocity -= min(self.p1_thrust, 8)
+                # if thrust is powerful enough, add light homing
+                if pointer_close and self.p1_thrust > 8:
+                    for _ in range(4):
+                        self.striker_right._moveTowardsBall()
+            # otherwise if jolted, launch forward
+            elif self.p1_jolt:
+                self.striker_right.impact_velocity -= 15
+                # scale based on distance from ball - launches further if the ball is further
+                self.striker_right.impact_velocity -= abs(20 * (self.pointer_right.x - self.ball.x)/self._width)
+                self.p1_rotz = -self.striker_right.rotation
 
             # handle rotations
             if not (self.p1_rt or self.p1_lt):
@@ -1094,27 +1225,38 @@ class MugicPongGame(PongGame):
             self.pointer_right.hide()
             self._handle_p1_controls()
 
-        # Mugic player 2 controls
+        # Mugic player 2 controls - just a mirror of above
         if self.mugic_player_2.connected() and not self.p2_CPU:
+            # match pointer to actual mugic pointing position
             self.pointer_left.show()
             self.pointer_left.centery = self.p2_y
             self.pointer_left.rotateTo(self.striker_left.rotation)
-            if abs(self.p2_thrust) > abs(self.p2_swing):
-                self.p2_thrust = max(0, self.p2_thrust - 3) * 4
-                self.striker_left.impact_velocity += min(self.p2_thrust, 8)
-                if self.p2_thrust > 8:
-                    for _ in range(3):
-                        self.striker_left._moveTowardsBall()
-            elif self.p2_jolt:
-                self.striker_left.impact_velocity += 10
-                self.striker_left.impact_velocity += abs(25 * (self.pointer_left.x - self.ball.x)/self._width)
-            close_to_ball = self.pointer_left.distanceTo(self.ball) < self._height // 6
+            # aim assist - if close enough to ball move towards it
+            close_to_ball = self.pointer_left.distanceTo(self.ball) < self._height // 4
+            pointer_close = abs(self.pointer_left.centery - self.ball.centery) < self._height//6
             striker_close = abs(self.striker_left.centery - self.ball.centery) < self._height//6
             if close_to_ball and striker_close and not self.p2_jolt:
                 self.striker_left._moveTowardsBall()
-            elif not self.p2_jolt:
-                self.striker_left._moveTowardsPoint(self.p2_y)
-                self.striker_left._moveTowardsPoint(self.p2_y)
+            else: # normally, just move towards pointing position
+                for _ in range(3):
+                    self.striker_left._moveTowardsPoint(self.p2_y)
+            # on thrust - swing forward
+            thrusting = abs(self.p2_thrust) > abs(self.p2_swing)
+            if thrusting:
+                self.p2_thrust = max(0, self.p2_thrust - 3) * 4
+                self.striker_left.impact_velocity += min(self.p2_thrust, 8)
+                # if thrust is powerful enough, add light homing
+                if pointer_close and self.p2_thrust > 8:
+                    for _ in range(4):
+                        self.striker_left._moveTowardsBall()
+            # otherwise if jolted, launch forward
+            elif self.p2_jolt:
+                self.striker_left.impact_velocity += 15
+                # scale based on distance from ball - launches further if the ball is further
+                self.striker_left.impact_velocity += abs(20 * (self.pointer_left.x - self.ball.x)/self._width)
+                self.p2_rotz = -self.striker_left.rotation # lock rotation
+
+            # handle rotations
             if not (self.p2_rt or self.p2_lt):
                 self.striker_left._rotateTowardsAngle(-self.p2_rotz)
             else:
@@ -1122,7 +1264,7 @@ class MugicPongGame(PongGame):
                     self.striker_left._rotateRight()
                 if self.p2_lt:
                     self.striker_left._rotateLeft()
-        else:
+        else: # if not connected, use normal controls
             self.pointer_left.hide()
             self._handle_p2_controls()
 
@@ -1136,31 +1278,27 @@ class MugicPongGame(PongGame):
         self.p1_mugic_display = MugicDisplay(self.mugic_player_1)
         self.p2_mugic_display = MugicDisplay(self.mugic_player_2)
         p1_tab1 = self.debug_screen_left.getTab(0)
-        p1_tab1.base_background.fill(Color.black)
         p2_tab1 = self.debug_screen_right.getTab(0)
-        p2_tab1.base_background.fill(Color.black)
-        p1_tab1._refresh_background()
-        p2_tab1._refresh_background()
+        p1_tab1.background.set_colorkey(Color.black)
+        p2_tab1.background.set_colorkey(Color.black)
 
     def _insert_mugic_image(self):
         p1_tab1 = self.debug_screen_right.getTab(0)
         mugic_p1_image = self.p1_mugic_display.getImage(p1_tab1.abs_width, p1_tab1.abs_height)
-        p1_tab1.background.fill(Color.black)
-        p1_tab1.background.blit(mugic_p1_image, (0, 0))
+        p1_tab1.refresh()
+        p1_tab1._screen.blit(mugic_p1_image, (0, 0))
         p2_tab1 = self.debug_screen_left.getTab(0)
         mugic_p2_image = self.p2_mugic_display.getImage(p2_tab1.abs_width, p2_tab1.abs_height)
-        p2_tab1.background.fill(Color.black)
-        p2_tab1.background.blit(mugic_p2_image, (0, 0))
-        p1_tab1.refresh()
         p2_tab1.refresh()
+        p2_tab1._screen.blit(mugic_p2_image, (0, 0))
 
     def _init_mugic_text(self):
         instruction_text = "Instructions: H \n P to pause \n R to reset"
         self.p1_mugic_text = self.debug_screen_right.writeNewText("NO CONNECTION", tab=2)
         self.p2_mugic_text = self.debug_screen_left.writeNewText(instruction_text, tab=2)
         p1_txt, p2_txt = self.p1_mugic_text, self.p2_mugic_text
-        p1_txt.move(5, 2)
-        p2_txt.move(5, 2)
+        p1_txt.move(15, 10)
+        p2_txt.move(15, 10)
         p1_txt.setFontSize(30)
         p2_txt.setFontSize(30)
         p1_txt.setFontType(MONOSPACE)
@@ -1227,7 +1365,7 @@ class MugicPongGame(PongGame):
         self._current_screen = "title"
         title_text = ""
         subtitle_text = "press P to start, H for instructions, C for credits"
-        self._draw_menu_screen(title_text, subtitle_text, background=self._title_background)
+        self._draw_menu_screen(title_text, subtitle_text, background=self._title_background or Color.random())
 
     def _instruction_screen(self):
         self.pause()
@@ -1248,30 +1386,44 @@ Mugic Controls:
 
 Press P to continue, R to reset
 Press M to return to Menu
+Press C to view Credits
 """
-        self._draw_menu_screen(title_text, instruction_text, background=Color.black)
+        self._draw_menu_screen(title_text, instruction_text,
+                               background=self._title_background or Color.black)
 
     def _credits_screen(self):
         self.pause()
         self._current_screen = "credits"
         title_text = "CREDITS"
         credits_text = \
-"""
-Team Mugical (2024-2025)
-UCI Informatics Senior Capstone Group
-Members:
-    Eric Xu, Melody Chan-Yoeun,
-    Bryan Matta Villatoro,
-    Shreya Padisetty, Aj Singh
-
+"""UCI Informatics Senior Capstone 2024-25
+    INF 191AB - Professor D. Denenberg
+Team Mugical
+    Developer: Eric Xu
+    Art and UI: Melody Chan-Yoeun
+    QA Tester: Bryan Matta Villatoro
+    Layout Design: Kaitlyn Ngoc Chau Tran
+    Theming: Shreya Padisetty
+    Networks: Aj Singh
+    Emotional Support: Bryan's Cat
 Project Sponsor:
     Mari Kimura, MugicMotion
-
 Git Repo:
     github.com/ericxu-25/mugic-pypong
+    github.com/ericxu-25/Mugical
 """
-        self._draw_menu_screen(title_text, credits_text, background=Color.randomBetween(0.2, 0.4, 0.6))
-        for image_sprite in self.credit_images: image_sprite.show()
+        self._draw_menu_screen(title_text, credits_text,
+                               background=self._title_background or Color.randomBetween(0.2, 0.4, 0.6))
+
+    def _draw_menu_screen(self, *args, **kwargs):
+        if self._current_screen in ("credits", "title"):
+            self.menu_title_text.color = (247, 177, 155)
+        else: self.menu_title_text.color = Color.white
+        super()._draw_menu_screen(*args, **kwargs)
+        if self._current_screen != "credits":
+            for image_sprite in self.credit_images: image_sprite.hide()
+        else:
+            for image_sprite in self.credit_images: image_sprite.show()
 
     def _hide_menu_screen(self):
         super()._hide_menu_screen()
@@ -1316,7 +1468,7 @@ def main():
     args = parser.parse_args()
 
     # disable warnings
-    logging.basicConfig(level=logging.ERROR)
+    #logging.basicConfig(level=logging.ERROR)
     # define base resolution
     WIDTH, HEIGHT = 1920, 1080
     Window().rescale(WIDTH, HEIGHT)
