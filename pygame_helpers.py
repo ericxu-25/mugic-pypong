@@ -450,6 +450,7 @@ class TextSprite(Sprite):
 
     def _line_renders(self):
         spacing = self._fontsize + self._spacing
+        if self.text == "": return list()
         for i, line in enumerate(self.text.split('\n')):
             line_render = self.font.render(
                     line,

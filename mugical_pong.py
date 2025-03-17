@@ -1370,9 +1370,11 @@ class MugicPongGame(PongGame):
     def _title_screen(self):
         self.pause()
         self._current_screen = "title"
-        title_text = ""
+        title_text = "MUGICAL BALL" if self._title_background is None else ""
         subtitle_text = "press P to start, H for instructions, C for credits"
-        self._draw_menu_screen(title_text, subtitle_text, background=self._title_background or Color.random())
+        self._draw_menu_screen(title_text, subtitle_text,
+                               background=self._title_background\
+                                       or Color.randomBetween(0.8, 1.0, 0.6) )
 
     def _instruction_screen(self):
         self.pause()
@@ -1420,10 +1422,11 @@ Git Repo:
     github.com/ericxu-25/Mugical
 """
         self._draw_menu_screen(title_text, credits_text,
-                               background=self._title_background or Color.randomBetween(0.2, 0.4, 0.6))
+                               background=self._title_background \
+                                       or Color.randomBetween(0.6, 0.9, 0.6))
 
     def _draw_menu_screen(self, *args, **kwargs):
-        if self._current_screen in ("credits", "title"):
+        if self._current_screen in ("credits", "title") and self._title_background is not None:
             self.menu_title_text.color = (247, 177, 155)
         else: self.menu_title_text.color = Color.white
         super()._draw_menu_screen(*args, **kwargs)
