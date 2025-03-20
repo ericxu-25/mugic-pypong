@@ -28,8 +28,6 @@ Project coded by Team Mugical
 
 Sponsored by Mari Kimura, President of MugicMotion
 
-Created as part of:
-
 UCI 2024-2025 Informatics Capstone Project
 
 Professor D. Denenberg
