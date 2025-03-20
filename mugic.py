@@ -132,7 +132,7 @@ class IMU:
 
     Attributes:
         _data (deque of dicts): working deque buffer for IMU datagrams
-        _reserve (None or dequeu of dicts): reserve deque for persistent datagram storage
+        _reserve (None or dequeu of dicts): reserve deque for persistent raw datagram storage
         _zero (dict): reserve deque for persistent datagram storage
 
     """
@@ -183,12 +183,12 @@ class IMU:
 
     def _add_datagram(self, datagram):
         """pushes the passed in raw datagram onto the data queue"""
+        if self._reserve is not None:
+            self._reserve.appendleft(datagram.copy())
         datagram = self._update_state(datagram)
         datagram['_seq'] = self._total_datagrams
         self._total_datagrams += 1
         self._data.appendleft(datagram)
-        if self._reserve is not None:
-            self._reserve.appendleft(datagram)
 
     def peekDatagram(self, raw=False, smooth=3):
         """Returns the next datagram on the deque.

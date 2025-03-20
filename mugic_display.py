@@ -18,6 +18,7 @@ class IMUControllerDisplay:
         self._image = pygame.Surface(self._image_size)
         self._image.set_colorkey(Color.black)
         self._action_image = self._image.copy()
+        self._action_image.set_colorkey(Color.black)
         # draw acceleration and gyroscope graph axes
         ag_top = 1
         ag_left = 1
@@ -430,6 +431,7 @@ def main():
     parser.add_argument('-d', '--datafile', default="recording.txt",
                         help="datafile to playback/record to")
     args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO)
     mugic = None
     if args.record:
         mugic = recordMugicDevice(args.port, args.datafile, args.seconds)
