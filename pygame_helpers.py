@@ -815,6 +815,7 @@ class Screen:
         self._pause = False
         self._position = (0, 0)
         if padding == None: padding = (0, 0, 0, 0)
+        self._colorkey = None
         self._init_screen(padding, w, h)
 
     def _init_screen(self, padding, w, h):
@@ -824,6 +825,7 @@ class Screen:
         self._height = h - padding[2] - padding[3]
         self._scale = 1
         self._base_background = pygame.Surface((w, h))
+        self._base_background.set_colorkey(self._colorkey)
         self._base_background.fill(Color.green)
         game_space = pygame.Rect((padding[0], padding[1]),
                                  (self._width, self._height))
@@ -843,6 +845,15 @@ class Screen:
         self.setScreen(new_screen)
 
     @property
+    def colorkey(self):
+        return self._colorkey
+
+    @colorkey.setter
+    def colorkey(self, color):
+        self._colorkey = color
+        self._refresh_background()
+
+    @property
     def base_background(self):
         return self._base_background
 
@@ -854,6 +865,7 @@ class Screen:
     def _refresh_background(self):
         self.background = pygame.transform.scale(
                 self._base_background, (self.abs_width, self.abs_height))
+        self.background.set_colorkey(self._colorkey)
 
     @property
     def scale(self):

@@ -16,6 +16,7 @@ class IMUControllerDisplay:
     def _init_image(self, w, h):
         self._image_size = (w, h)
         self._image = pygame.Surface(self._image_size)
+        self._image.convert_alpha()
         self._image.set_colorkey(Color.black)
         self._action_image = self._image.copy()
         self._action_image.set_colorkey(Color.black)
@@ -397,9 +398,9 @@ def viewMugicDevice(mugic_device):
                 mugic_device.autoDetectMugicType()
 
         if mugic_device.connected():
-            mugic_image = mugic_display.getImage(datagram=next_datagram)
-            action_image = mugic_display.getActionImage(datagram=next_datagram)
             display_screen._redraw()
+            action_image = mugic_display.getActionImage(datagram=next_datagram)
+            mugic_image = mugic_display.getImage(datagram=next_datagram)
             mugic_image = pygame.transform.smoothscale_by(mugic_image,
                                                  display_screen._scale)
             action_image = pygame.transform.smoothscale_by(action_image,
@@ -431,7 +432,8 @@ def main():
     parser.add_argument('-d', '--datafile', default="recording.txt",
                         help="datafile to playback/record to")
     args = parser.parse_args()
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(format='%(levelname)s %(message)s',
+                        level=logging.INFO)
     mugic = None
     if args.record:
         mugic = recordMugicDevice(args.port, args.datafile, args.seconds)
