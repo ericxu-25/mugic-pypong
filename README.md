@@ -24,6 +24,8 @@ Created with the [pymugic](https://github.com/amiguet/pymugic/tree/main) project
 Quaternion and 3d-drawing library taken (and extended) [from peter hinch](https://github.com/peterhinch/micropython-samples/blob/master/QUATERNIONS.md)
 
 ## Attributation
+![Team Mugical Logo - Text that says Team Mugical with a wizardly-cat on the side](https://github.com/ericxu-25/mugic-pypong/blob/main/assets/mugical_logo.png)
+
 Project coded by Team Mugical
 
 Sponsored by Mari Kimura, President of MugicMotion
