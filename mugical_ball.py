@@ -727,7 +727,7 @@ class PongGame(Game):
         self.menu_background_sprite.hide()
 
     def _update_menu_text_position(self):
-        middle = self._height // 4 + 20
+        middle = self._height // 8 + 20
         center = self._width // 2
         self.menu_title_text.moveCenterTo(center, middle)
         self.menu_subtitle_text.moveCenterTo(center, middle)
@@ -1370,7 +1370,7 @@ class MugicPongGame(PongGame):
     def _title_screen(self):
         self.pause()
         self._current_screen = "title"
-        title_text = "MUGICAL BALL" if self._title_background is None else ""
+        title_text = "MUGICAL BALL"
         subtitle_text = "press P to start, H for instructions, C for credits"
         self._draw_menu_screen(title_text, subtitle_text,
                                background=self._title_background\
