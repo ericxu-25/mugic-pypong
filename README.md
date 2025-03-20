@@ -1,11 +1,12 @@
 # mugic-pypong
 ## Contents
 This Python repository contains the following:
-* mugic.py - module to interface with Mugic devices
-* mugic_display.py - module to display the Mugic and its data
+* mugic.py          - module to interface with Mugic devices
+* mugic_display.py  - module to display the Mugic and its data
 * pygame_helpers.py - simple set of custom classes and methods to make resizable pygame games
-* mugical_ball.py - "Pong" example game used to demonstrate the Mugic
-* quaternions/ - module with code for quaternions and simple 3d-wireframing
+* mugical_ball.py   - "Pong" example game used to demonstrate the Mugic
+* assets/           - image assets for mugical_ball.py
+* quaternions/      - module with code for quaternions and simple 3d-wireframing
 
 ## Usage
 \$ python mugic_display.py \[port\]
