@@ -858,13 +858,16 @@ class Screen:
 
     @base_background.setter
     def base_background(self, new_bg):
-        self._base_background = new_bg
+        self._base_background = new_bg.copy()
         self._refresh_background()
 
     def _refresh_background(self):
         self.background = pygame.transform.scale(
                 self._base_background, (self.abs_width, self.abs_height))
         self.background.set_colorkey(self._colorkey)
+
+    def refreshBackground(self):
+        self._refresh_background()
 
     @property
     def scale(self):
