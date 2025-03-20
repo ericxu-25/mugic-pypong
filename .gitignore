@@ -2,3 +2,6 @@
 venv/
 # ignore compiled python files
 __pycache__/
+# ignore build and dist
+build/
+dist/
