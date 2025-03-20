@@ -464,7 +464,7 @@ class IMUController(IMU):
 
     """
 
-    _connection_timeout = 5.0
+    _connection_timeout = 3.0
     # configuration values used for basic frame interpretation
     _accel_delta = 2
     _accel_low_pass = array('f', [3, 5, 5])
