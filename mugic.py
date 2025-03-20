@@ -46,7 +46,7 @@ Classes
     Striker - GameSprite that represents a Pong paddle
     Ball - GameSprite that represents a Pong ball
     PongGame - barebones implementation with keyboard controls
-    +---MugicPongGame - minimal implementation with mugic controls
+    +---MugicPongGame - game implementation with mugic controls
 
 ABOUT THE DEVELOPERS
     Team Mugical - UCI Informatics Senior Capstone Group, 2024-2025
