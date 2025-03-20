@@ -178,6 +178,7 @@ class IMUControllerDisplay:
             return self.getActionImage(w, h)
         if datagram is None:
             datagram = self._imu.peekDatagram()
+        if not self._imu.connected(): return self._action_image
         if datagram is not None:
             #accel_data = self._imu.accel(datagram)
             #gyro_data =  self._imu.gyro(datagram)
@@ -326,18 +327,33 @@ def viewMugicDevice(mugic_device):
     # mugic display setup
     mugic_display = MugicDisplay(mugic_device)
     mugic_display.setImageSize(*pane_size)
-    # object setup
+    # Screen setup
     display_screen = WindowScreen(*window_size)
+    display_screen.colorkey = Color.black
     Window().addScreen(display_screen)
+    # text setup
     fps_text = TextSprite()
+    instruction_text = TextSprite()
     mugic_data_text = TextSprite()
     mugic_movement_text= TextSprite()
     display_screen.addSprite(fps_text)
     display_screen.addSprite(mugic_data_text)
     display_screen.addSprite(mugic_movement_text)
+    display_screen.addSprite(instruction_text)
     fps_text.setFormatString("fps: {}")
     fps_text.setText("NOT CONNECTED").setFontSize(30)
     fps_text.moveTo(50, 50)
+    instruction_text.setFormatString("{}").moveTo(50, 100).setFontSize(20)
+    instruction_text.setText("""Instructions
+* use QEWASDZX to orient the view
+* C to zero/calibrate
+* R to reset orientation
+* F to show raw values
+* G to show interpreted movements
+* L to switch between Mugic 1.0 and Mugic 2.0
+* H to close these instructions
+
+-- with love from Team Mugical --""")
     mugic_data_text.setFormatString("{}").moveTo(550, 100).setFontSize(20).hide()
     mugic_data_text.setFontType(MONOSPACE)
     mugic_movement_text.setFormatString("{}").moveTo(550, 350).setFontSize(20).hide()
@@ -364,6 +380,8 @@ def viewMugicDevice(mugic_device):
                 mugic_movement_text.toggleVisibility()
             elif event.key == pygame.K_l:
                 mugic_device.toggleLegacy()
+            elif event.key in (pygame.K_h, pygame.K_i):
+                instruction_text.toggleVisibility()
         state = pygame.key.get_pressed()
         rot_amount = pi/90
         if state[pygame.K_a]:
@@ -397,24 +415,32 @@ def viewMugicDevice(mugic_device):
             if frames < 20:
                 mugic_device.autoDetectMugicType()
 
-        if mugic_device.connected():
-            display_screen._redraw()
-            action_image = mugic_display.getActionImage(datagram=next_datagram)
-            mugic_image = mugic_display.getImage(datagram=next_datagram)
-            mugic_image = pygame.transform.smoothscale_by(mugic_image,
-                                                 display_screen._scale)
-            action_image = pygame.transform.smoothscale_by(action_image,
-                                                 display_screen._scale)
-            display.blit(mugic_image, (0, 0))
-            display.blit(action_image, (500*display_screen._scale, 0))
-            if mugic_data_text.visible:
-                mugic_data_text.setText(mugic_display.getDataText(next_datagram))
-            if mugic_movement_text.visible:
-                mugic_movement_text.setText(mugic_display.getActionText(next_datagram))
-        else:
-            time.sleep(.01)
+        # fill screen with black
+        pygame.display.get_surface().fill(Color.black)
+
+        # draw mugic text
+        if mugic_data_text.visible:
+            mugic_data_text.setText(mugic_display.getDataText(next_datagram))
+        if mugic_movement_text.visible:
+            mugic_movement_text.setText(mugic_display.getActionText(next_datagram))
+
+        # draw sprites
+        display_screen._redraw()
+
+        # draw mugic images
+        mugic_image = mugic_display.getImage(datagram=next_datagram)
+        mugic_image = pygame.transform.smoothscale_by(mugic_image,
+                                             display_screen._scale)
+        action_image = mugic_display.getActionImage(datagram=next_datagram)
+        action_image = pygame.transform.smoothscale_by(action_image,
+                                             display_screen._scale)
+        display.blit(action_image, (500*display_screen._scale, 0))
+        display.blit(mugic_image, (0, 0))
         fps_text.setText(round(fps_value, 3))
+
+        # update display
         pygame.display.flip()
+        if not mugic_device.connected(): time.sleep(0.1)
 
 
 # MAIN FUNCTION - for use with testing / recording
@@ -443,11 +469,6 @@ def main():
         mugic = MugicDevice(port=args.port)
     print(mugic)
     print("Running mugic_helper display...")
-    print("== Instructions ==")
-    print("* use QEWASDZX to orient the view")
-    print("* C to zero the values, R to reset orientation")
-    print("* F to show raw values, G to show interpreted movements")
-    print("* L to switch between Mugic 1.0 and Mugic 2.0")
     pygame.init()
     viewMugicDevice(mugic)
     mugic.close()
