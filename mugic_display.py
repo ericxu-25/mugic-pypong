@@ -329,7 +329,9 @@ def viewMugicDevice(mugic_device):
     mugic_display.setImageSize(*pane_size)
     # Screen setup
     display_screen = WindowScreen(*window_size)
-    display_screen.colorkey = Color.black
+    display_screen.base_background = display.convert_alpha()
+    display_screen.base_background.fill((0, 0, 0 ,0))
+    display_screen.refreshBackground()
     Window().addScreen(display_screen)
     # text setup
     fps_text = TextSprite()
@@ -424,9 +426,6 @@ def viewMugicDevice(mugic_device):
         if mugic_movement_text.visible:
             mugic_movement_text.setText(mugic_display.getActionText(next_datagram))
 
-        # draw sprites
-        display_screen._redraw()
-
         # draw mugic images
         mugic_image = mugic_display.getImage(datagram=next_datagram)
         mugic_image = pygame.transform.smoothscale_by(mugic_image,
@@ -438,6 +437,9 @@ def viewMugicDevice(mugic_device):
         display.blit(mugic_image, (0, 0))
         fps_text.setText(round(fps_value, 3))
 
+        # draw sprites
+        display_screen._redraw()
+
         # update display
         pygame.display.flip()
         if not mugic_device.connected(): time.sleep(0.1)
@@ -445,30 +447,29 @@ def viewMugicDevice(mugic_device):
 
 # MAIN FUNCTION - for use with testing / recording
 def main():
+    print("\n==MUGIC DISPLAY==\n")
     parser = argparse.ArgumentParser(
             description='visualization of Mugic IMU data')
     parser.add_argument('port', type=int, default=4000, nargs="?",
                         help="port of the mugic device to connect to, default 4000")
-    parser.add_argument('-p', '--playback', action='store_true',
-                        help="playback mugic device data from a file")
-    parser.add_argument('-r', '--record', action='store_true',
+    parser.add_argument('-r', '--record', nargs='?', const='mugic_recording.txt',
                         help="record mugic device data to a file")
+    parser.add_argument('-p', '--playback', nargs='?', const='mugic_recording.txt',
+                        help="playback mugic device data from a file")
     parser.add_argument('-s', '--seconds', type=int, default=10,
                         help="amount of seconds to record")
-    parser.add_argument('-d', '--datafile', default="recording.txt",
-                        help="datafile to playback/record to")
     args = parser.parse_args()
     logging.basicConfig(format='%(levelname)s %(message)s',
                         level=logging.INFO)
     mugic = None
-    if args.record:
-        mugic = recordMugicDevice(args.port, args.datafile, args.seconds)
-    elif args.playback:
-        mugic = MockMugicDevice(port=args.port, datafile=args.datafile)
+    if args.record is not None:
+        mugic = recordMugicDevice(args.port, args.record, args.seconds)
+    elif args.playback is not None:
+        mugic = MockMugicDevice(port=args.port, datafile=args.playback)
     if mugic is None:
         mugic = MugicDevice(port=args.port)
+    print("Running Mugic display...")
     print(mugic)
-    print("Running mugic_helper display...")
     pygame.init()
     viewMugicDevice(mugic)
     mugic.close()
