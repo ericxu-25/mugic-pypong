@@ -36,7 +36,7 @@ Professor D. Denenberg
 * Developer - Eric Xu
 * Art & UI - Melody Chan-Yoeun
 * QA Tester - Bryan Matta Villatoro
-* Layout Design - Kaitlyn Ngoc Chau Train
+* Layout Design - Kaitlyn Ngoc Chau Tran
 * Theming - Shreya Padisetty
 * Networks - Aj Singh
 * Emotional Support - Bryan's cat
