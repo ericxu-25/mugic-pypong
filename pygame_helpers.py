@@ -146,7 +146,6 @@ class Sprite(pygame.sprite.DirtySprite):
         self.base_image.fill(Color.random())
         self._colorkey = None
         self.setImage(self.base_image)
-        self.rect = self.image.get_rect()
         self.moveCenterTo(self._x, self._y)
         # debug output
         Sprite.sprite_id += 1
@@ -368,7 +367,7 @@ class Sprite(pygame.sprite.DirtySprite):
         return self
 
     def setImage(self, image):
-        self.base_image = image
+        self.base_image = image.copy()
         image.set_colorkey(self._colorkey)
         self.rect = image.get_rect()
         self.resize(self.rect.w, self.rect.h)
